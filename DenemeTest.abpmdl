@@ -1,0 +1,108 @@
+{
+  "template": "app",
+  "imports": {
+    "Volo.Abp.LeptonXLiteTheme": {
+      "version": "4.3.5",
+      "isInstalled": true
+    },
+    "Volo.Abp.Account": {
+      "version": "9.3.5",
+      "isInstalled": true,
+      "creationTime": "10/28/2025 08:42:59 +00:00"
+    },
+    "Volo.Abp.OpenIddict": {
+      "version": "9.3.5",
+      "isInstalled": true,
+      "creationTime": "10/28/2025 08:42:59 +00:00"
+    },
+    "Volo.Abp.Identity": {
+      "version": "9.3.5",
+      "isInstalled": true,
+      "creationTime": "10/28/2025 08:42:59 +00:00"
+    },
+    "Volo.Abp.TenantManagement": {
+      "version": "9.3.5",
+      "isInstalled": true,
+      "creationTime": "10/28/2025 08:42:59 +00:00"
+    },
+    "Volo.Abp.SettingManagement": {
+      "version": "9.3.5",
+      "isInstalled": true,
+      "creationTime": "10/28/2025 08:42:59 +00:00"
+    },
+    "Volo.Abp.PermissionManagement": {
+      "version": "9.3.5",
+      "isInstalled": true,
+      "creationTime": "10/28/2025 08:42:59 +00:00"
+    },
+    "Volo.Abp.FeatureManagement": {
+      "version": "9.3.5",
+      "isInstalled": true,
+      "creationTime": "10/28/2025 08:42:59 +00:00"
+    }
+  },
+  "folders": {
+    "items": {
+      "src": {},
+      "test": {}
+    }
+  },
+  "packages": {
+    "DenemeTest.Application": {
+      "path": "src/DenemeTest.Application/DenemeTest.Application.abppkg",
+      "folder": "src"
+    },
+    "DenemeTest.Application.Tests": {
+      "path": "test/DenemeTest.Application.Tests/DenemeTest.Application.Tests.abppkg",
+      "folder": "test"
+    },
+    "DenemeTest.Domain.Shared": {
+      "path": "src/DenemeTest.Domain.Shared/DenemeTest.Domain.Shared.abppkg",
+      "folder": "src"
+    },
+    "DenemeTest.Application.Contracts": {
+      "path": "src/DenemeTest.Application.Contracts/DenemeTest.Application.Contracts.abppkg",
+      "folder": "src"
+    },
+    "DenemeTest.HttpApi": {
+      "path": "src/DenemeTest.HttpApi/DenemeTest.HttpApi.abppkg",
+      "folder": "src"
+    },
+    "DenemeTest.HttpApi.Client": {
+      "path": "src/DenemeTest.HttpApi.Client/DenemeTest.HttpApi.Client.abppkg",
+      "folder": "src"
+    },
+    "DenemeTest.EntityFrameworkCore.Tests": {
+      "path": "test/DenemeTest.EntityFrameworkCore.Tests/DenemeTest.EntityFrameworkCore.Tests.abppkg",
+      "folder": "test"
+    },
+    "DenemeTest.EntityFrameworkCore": {
+      "path": "src/DenemeTest.EntityFrameworkCore/DenemeTest.EntityFrameworkCore.abppkg",
+      "folder": "src"
+    },
+    "DenemeTest.TestBase": {
+      "path": "test/DenemeTest.TestBase/DenemeTest.TestBase.abppkg",
+      "folder": "test"
+    },
+    "DenemeTest.Domain.Tests": {
+      "path": "test/DenemeTest.Domain.Tests/DenemeTest.Domain.Tests.abppkg",
+      "folder": "test"
+    },
+    "DenemeTest.HttpApi.Client.ConsoleTestApp": {
+      "path": "test/DenemeTest.HttpApi.Client.ConsoleTestApp/DenemeTest.HttpApi.Client.ConsoleTestApp.abppkg",
+      "folder": "test"
+    },
+    "DenemeTest.DbMigrator": {
+      "path": "src/DenemeTest.DbMigrator/DenemeTest.DbMigrator.abppkg",
+      "folder": "src"
+    },
+    "DenemeTest.Blazor": {
+      "path": "src/DenemeTest.Blazor/DenemeTest.Blazor.abppkg",
+      "folder": "src"
+    },
+    "DenemeTest.Domain": {
+      "path": "src/DenemeTest.Domain/DenemeTest.Domain.abppkg",
+      "folder": "src"
+    }
+  }
+}
