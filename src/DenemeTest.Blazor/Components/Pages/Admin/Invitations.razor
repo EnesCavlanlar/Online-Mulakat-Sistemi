@@ -1,3 +1,100 @@
 ﻿@page "/admin/invitations"
+@using DenemeTest.Exams.Dtos
+@inject DenemeTest.Application.Exams.ITestAppService TestApp
+@inject DenemeTest.Application.Exams.ICandidateAppService CandidateApp
+@inject DenemeTest.Application.Exams.IInvitationAppService InvitationApp
+
 <h3>Aday Davet Et</h3>
-<p>Seçili test için e-posta ile davet gönderme formu.</p>
+
+@if (_loading)
+{
+    <p>Yükleniyor...</p>
+}
+else
+{
+    <div class="card">
+        <div class="card-body">
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <label class="form-label">Test</label>
+                    <select class="form-select" @bind="_form.TestId">
+                        @foreach (var t in _tests)
+                        {
+                            <option value="@t.Id">@t.Name</option>
+                        }
+                    </select>
+                </div>
+
+                <div class="col-md-6">
+                    <label class="form-label">Aday</label>
+                    <select class="form-select" @bind="_form.CandidateId">
+                        @foreach (var c in _candidates)
+                        {
+                            <option value="@c.Id">@($"{c.FirstName} {c.LastName} - {c.Email}")</option>
+                        }
+                    </select>
+                </div>
+
+                <div class="col-md-6">
+                    <label class="form-label">Son Geçerlilik</label>
+                    <!-- DateTime? ile bind; format önemli -->
+                    <input type="datetime-local"
+                           class="form-control"
+                           @bind="_expireLocal"
+                           @bind:format="yyyy-MM-ddTHH:mm" />
+                    <small class="text-muted">Mailde tek kullanımlık bağlantı yer alacak.</small>
+                </div>
+
+                <div class="col-12">
+                    <button class="btn btn-primary" @onclick="Send">Davet Gönder</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(_resultToken))
+    {
+        <div class="alert alert-success mt-3">
+            Davet oluşturuldu. Token: <code>@_resultToken</code><br />
+            MailHog üzerinde görmelisin: <strong>http://localhost:8025</strong>
+        </div>
+    }
+}
+
+@code {
+    private bool _loading = true;
+    private List<TestDto> _tests = new();
+    private List<CandidateDto> _candidates = new();
+
+    private SendInvitationDto _form = new();
+    private string? _resultToken;
+
+    // ⬇️ string yerine DateTime? kullanıyoruz
+    private DateTime? _expireLocal;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var t = await TestApp.GetListAsync(new Volo.Abp.Application.Dtos.PagedAndSortedResultRequestDto());
+        _tests = t.Items.ToList();
+
+        var c = await CandidateApp.GetListAsync(new Volo.Abp.Application.Dtos.PagedAndSortedResultRequestDto());
+        _candidates = c.Items.ToList();
+
+        if (_tests.Count > 0) _form.TestId = _tests[0].Id;
+        if (_candidates.Count > 0) _form.CandidateId = _candidates[0].Id;
+
+        // default: +3 gün (LOCAL)
+        _expireLocal = DateTime.Now.AddDays(3); // kullanıcı yerel saati
+        _loading = false;
+    }
+
+    private async Task Send()
+    {
+        // _expireLocal null ise +3 gün; varsa UTC'ye çevir.
+        _form.ExpireAt = (_expireLocal ?? DateTime.Now.AddDays(3)).ToUniversalTime();
+
+        var res = await InvitationApp.SendAsync(_form);
+        _resultToken = res.Token;
+        StateHasChanged();
+    }
+}

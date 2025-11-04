@@ -1,0 +1,242 @@
+﻿@page "/exam/runner/{SessionId:guid}"
+@using DenemeTest.Exams
+@using DenemeTest.Exams.Dtos
+@using Microsoft.JSInterop
+@using Microsoft.Extensions.Configuration
+@inject DenemeTest.Application.Exams.IExamSessionAppService SessionApp
+@inject DenemeTest.Application.Exams.IExamRunAppService RunApp
+@inject IJSRuntime JS
+@inject NavigationManager Nav
+@inject IConfiguration Config
+
+@* DTO enum için alias *@
+@using QT = DenemeTest.Exams.Dtos.QuestionTypeDto
+
+<h3>@(_test?.TestName ?? "Sınav")</h3>
+
+<div class="alert alert-warning">
+    Sekme değiştirir veya odak kaybı yaşarsan sınavın iptal edilebilir. Lütfen bu pencereden ayrılma.
+</div>
+
+@if (_test == null)
+{
+    <p>Yükleniyor...</p>
+}
+else
+{
+    <div class="mb-2">
+        Soru @(_index + 1) / @_questions.Count
+        @if (_violations > 0)
+        {
+            <span class="badge bg-danger ms-2">İhlal: @_violations / @_maxViolations</span>
+        }
+    </div>
+
+    <div class="card mb-3">
+        <div class="card-body">
+            <h5 class="card-title">@_current.Text</h5>
+
+            @if (_current.Type == QT.MultipleChoice)
+            {
+                @foreach (var o in _current.Options)
+                {
+                    <div class="form-check">
+                        <input class="form-check-input"
+                               type="checkbox"
+                               checked="@IsChecked(o.Id)"
+                               @onchange="(e => ToggleOption(o.Id, e))"
+                               id="@o.Id">
+                        <label class="form-check-label" for="@o.Id">@o.Text</label>
+                    </div>
+                }
+            }
+            else
+            {
+                <textarea class="form-control" rows="6" @bind="_classicText"></textarea>
+            }
+        </div>
+    </div>
+
+    <div class="d-flex gap-2">
+        <button class="btn btn-outline-secondary" disabled="@(_index == 0)" @onclick="Prev">Önceki</button>
+        <button class="btn btn-outline-secondary" disabled="@(_index == _questions.Count - 1)" @onclick="Next">Sonraki</button>
+        <div class="flex-grow-1"></div>
+        <button class="btn btn-danger" @onclick="CancelExam">İptal</button>
+        <button class="btn btn-primary" @onclick="FinishExam">Bitir</button>
+    </div>
+}
+
+@code {
+    [Parameter] public Guid SessionId { get; set; }
+
+    private TestRunDto? _test;
+    private List<QuestionRunDto> _questions = new();
+    private QuestionRunDto _current = new();
+    private int _index = 0;
+
+    // cevap state
+    private readonly Dictionary<Guid, HashSet<Guid>> _selected = new(); // questionId -> optionIds
+    private readonly Dictionary<Guid, string> _classics = new();        // questionId -> text
+    private string _classicText = "";
+
+    // proctoring & kayıt
+    private DotNetObjectReference<RunnerCallbacks>? _objRef;
+    private int _violations = 0;
+    private int _maxViolations = 2; // appsettings: Exam:MaxViolations
+
+    protected override async Task OnInitializedAsync()
+    {
+        var cfg = Config["Exam:MaxViolations"];
+        if (int.TryParse(cfg, out var mv) && mv > 0)
+            _maxViolations = mv;
+
+        _test = await RunApp.GetTestForRunAsync(SessionId);
+        _questions = _test.Questions;
+
+        if (_test.ShuffleQuestions)
+            _questions = _questions.OrderBy(_ => Guid.NewGuid()).ToList();
+
+        if (_test.ShuffleOptions)
+        {
+            foreach (var q in _questions)
+                q.Options = q.Options.OrderBy(_ => Guid.NewGuid()).ToList();
+        }
+
+        _current = _questions.First();
+        LoadAnswerState();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _objRef = DotNetObjectReference.Create(new RunnerCallbacks(this));
+            await JS.InvokeVoidAsync("examProctor.init", _objRef, SessionId.ToString());
+            try { await JS.InvokeVoidAsync("examRecorder.start", SessionId.ToString(), 2000, true); } catch { }
+        }
+    }
+
+    private async Task Prev()
+    {
+        await SaveCurrentAsync();
+        _index--;
+        _current = _questions[_index];
+        LoadAnswerState();
+    }
+
+    private async Task Next()
+    {
+        await SaveCurrentAsync();
+        _index++;
+        _current = _questions[_index];
+        LoadAnswerState();
+    }
+
+    private void LoadAnswerState()
+    {
+        if (_current.Type == QT.MultipleChoice)
+        {
+            if (!_selected.TryGetValue(_current.Id, out var set))
+            {
+                set = new HashSet<Guid>();
+                _selected[_current.Id] = set;
+            }
+            _classicText = string.Empty;
+        }
+        else
+        {
+            _selected.Remove(_current.Id);
+            _classicText = _classics.TryGetValue(_current.Id, out var t) ? t : "";
+        }
+        StateHasChanged();
+    }
+
+    private bool IsChecked(Guid optionId)
+        => _selected.TryGetValue(_current.Id, out var set) && set.Contains(optionId);
+
+    private void ToggleOption(Guid optionId, ChangeEventArgs e)
+    {
+        if (!_selected.TryGetValue(_current.Id, out var set))
+        {
+            set = new HashSet<Guid>();
+            _selected[_current.Id] = set;
+        }
+
+        var isOn = e.Value is bool b && b;
+        if (isOn) set.Add(optionId); else set.Remove(optionId);
+    }
+
+    private async Task SaveCurrentAsync()
+    {
+        if (_current.Type == QT.MultipleChoice)
+        {
+            var ids = _selected.TryGetValue(_current.Id, out var set) ? set.ToArray() : Array.Empty<Guid>();
+            await RunApp.SubmitAnswerAsync(new SubmitAnswerDto
+            {
+                SessionId = SessionId,
+                QuestionId = _current.Id,
+                SelectedOptionIds = ids
+            });
+        }
+        else
+        {
+            _classics[_current.Id] = _classicText ?? "";
+            await RunApp.SubmitAnswerAsync(new SubmitAnswerDto
+            {
+                SessionId = SessionId,
+                QuestionId = _current.Id,
+                TextAnswer = _classicText ?? ""
+            });
+        }
+    }
+
+    public async Task ReportFocusLost(string detail)
+    {
+        _violations++;
+        await SessionApp.RecordEventAsync(SessionId, ProctoringEventType.FocusLost, detail);
+
+        if (_violations >= _maxViolations)
+        {
+            try { await JS.InvokeVoidAsync("examRecorder.cancel"); } catch { }
+            await SessionApp.CancelAsync(SessionId, $"Odak kaybı {_violations} kez");
+            Nav.NavigateTo("/");
+        }
+
+        StateHasChanged();
+    }
+
+    private async Task CancelExam()
+    {
+        try { await JS.InvokeVoidAsync("examRecorder.cancel"); } catch { }
+        await SessionApp.CancelAsync(SessionId, "Kullanıcı iptal");
+        Nav.NavigateTo("/");
+    }
+
+    private async Task FinishExam()
+    {
+        await SaveCurrentAsync();
+
+        try { await JS.InvokeVoidAsync("examRecorder.stop"); } catch { }
+
+        var score = await RunApp.ComputeAndSaveScoreAsync(SessionId);
+        await SessionApp.FinishAsync(SessionId, score, "Auto-computed");
+        Nav.NavigateTo("/admin/reports");
+    }
+
+    public void Dispose()
+    {
+        _objRef?.Dispose();
+        try { JS.InvokeVoidAsync("examRecorder.cancel"); } catch { }
+    }
+
+    // JS -> .NET köprüsü
+    public class RunnerCallbacks
+    {
+        private readonly Runner _page;
+        public RunnerCallbacks(Runner page) => _page = page;
+
+        [JSInvokable]
+        public Task ReportFocusLost(string sessionId, string detail)
+            => _page.ReportFocusLost(detail);
+    }
+}

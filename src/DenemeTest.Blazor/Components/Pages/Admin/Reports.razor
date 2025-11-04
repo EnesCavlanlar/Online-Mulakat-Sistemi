@@ -1,3 +1,65 @@
 ﻿@page "/admin/reports"
+@using DenemeTest.Exams.Dtos
+@inject DenemeTest.Application.Exams.IReportsAppService ReportsApp
+
 <h3>Raporlar</h3>
-<p>İsim-Soyisim-Mail-Puan (azalan) sıralı liste + ilk 30 filtre/CSV export.</p>
+
+<div class="d-flex align-items-center gap-3 mb-3">
+    <label class="form-label mb-0">Gösterim:</label>
+    <select class="form-select w-auto" @bind="_take" @bind:event="onchange">
+        <option value="10">İlk 10</option>
+        <option value="20">İlk 20</option>
+        <option value="30">İlk 30</option>
+        <option value="50">İlk 50</option>
+    </select>
+</div>
+
+@if (_items is null)
+{
+    <p>Yükleniyor...</p>
+}
+else if (_items.Length == 0)
+{
+    <div class="alert alert-info">Henüz puanlanmış sınav bulunmuyor.</div>
+}
+else
+{
+    <table class="table table-striped align-middle">
+        <thead>
+            <tr>
+                <th style="width:60px">#</th>
+                <th>Ad Soyad</th>
+                <th>E-posta</th>
+                <th style="width:100px">Puan</th>
+            </tr>
+        </thead>
+        <tbody>
+            @{
+                var idx = 0;
+            }
+            @foreach (LeaderboardItemDto row in _items!)
+            {
+                <tr>
+                    <td>@(++idx)</td>
+                    <td>@row.FirstName @row.LastName</td>
+                    <td>@row.Email</td>
+                    <td><strong>@row.Score</strong></td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private int _take = 30;
+    private LeaderboardItemDto[]? _items;
+
+    protected override async Task OnInitializedAsync() => await Reload();
+
+    private async Task Reload()
+    {
+        _items = null;
+        _items = await ReportsApp.GetLeaderboardAsync(_take);
+        StateHasChanged();
+    }
+}

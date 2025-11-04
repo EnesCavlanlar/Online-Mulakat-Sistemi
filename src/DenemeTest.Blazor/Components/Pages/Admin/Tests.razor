@@ -1,3 +1,91 @@
 ﻿@page "/admin/tests"
+@using DenemeTest.Exams.Dtos
+@inject DenemeTest.Application.Exams.ITestAppService TestApp
+
 <h3>Testler</h3>
-<p>Buraya test listesi + Ekle/Düzenle + Soru bağlama ekranı gelecek.</p>
+
+@if (_loading)
+{
+    <p>Yükleniyor...</p>
+}
+else
+{
+    <button class="btn btn-primary" @onclick="NewTest">Yeni Test</button>
+
+    <table class="table mt-3">
+        <thead>
+            <tr>
+                <th>Ad</th>
+                <th>Ş. Sorular</th>
+                <th>Ş. Şıklar</th>
+                <th style="width:160px">İşlemler</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var t in _items)
+            {
+                <tr>
+                    <td>@t.Name</td>
+                    <td>@(t.ShuffleQuestions ? "Evet" : "Hayır")</td>
+                    <td>@(t.ShuffleOptions ? "Evet" : "Hayır")</td>
+                    <td>
+                        <button class="btn btn-sm btn-outline-secondary me-1" @onclick="() => EditTest(t.Id)">Düzenle</button>
+                        <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteTest(t.Id)">Sil</button>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private bool _loading = true;
+    private List<TestDto> _items = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        var list = await TestApp.GetListAsync(new Volo.Abp.Application.Dtos.PagedAndSortedResultRequestDto());
+        _items = list.Items.ToList();
+        _loading = false;
+    }
+
+    private async Task NewTest()
+    {
+        var dto = new CreateUpdateTestDto
+        {
+            Name = "Deneme Testi",
+            Description = "İlk test",
+            ShuffleQuestions = true,
+            ShuffleOptions = true
+        };
+        await TestApp.CreateAsync(dto);
+        await LoadAsync();
+        StateHasChanged();
+    }
+
+    private async Task EditTest(Guid id)
+    {
+        // Basit örnek: adı sonuna (Düzenlendi) ekleyelim
+        var cur = (await TestApp.GetAsync(id));
+        var upd = new CreateUpdateTestDto
+        {
+            Name = cur.Name + " (Düzenlendi)",
+            Description = cur.Description,
+            ShuffleQuestions = cur.ShuffleQuestions,
+            ShuffleOptions = cur.ShuffleOptions
+        };
+        await TestApp.UpdateAsync(id, upd);
+        await LoadAsync();
+    }
+
+    private async Task DeleteTest(Guid id)
+    {
+        await TestApp.DeleteAsync(id);
+        await LoadAsync();
+    }
+}

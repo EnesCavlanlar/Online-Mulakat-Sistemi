@@ -1,3 +1,142 @@
 ﻿@page "/admin/candidates"
+@using DenemeTest.Exams.Dtos
+@inject DenemeTest.Application.Exams.ICandidateAppService CandidateApp
+
 <h3>Adaylar</h3>
-<p>Buraya aday listesi + Ekle/Düzenle gelecek.</p>
+
+@if (_loading)
+{
+    <p>Yükleniyor...</p>
+}
+else
+{
+    <div class="d-flex gap-2 mb-3">
+        <button class="btn btn-primary" @onclick="NewCandidate">Yeni Aday</button>
+    </div>
+
+    <table class="table table-striped">
+        <thead>
+            <tr>
+                <th>Ad</th>
+                <th>Soyad</th>
+                <th>E-posta</th>
+                <th style="width:120px"></th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var c in _items)
+            {
+                <tr>
+                    <td>@c.FirstName</td>
+                    <td>@c.LastName</td>
+                    <td>@c.Email</td>
+                    <td>
+                        <button class="btn btn-sm btn-outline-secondary me-2" @onclick="() => Edit(c)">Düzenle</button>
+                        <button class="btn btn-sm btn-outline-danger" @onclick="() => Delete(c.Id)">Sil</button>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@if (_showModal)
+{
+    <div class="modal fade show d-block" style="background-color: rgba(0,0,0,.5);">
+        <div class="modal-dialog" @onclick:stopPropagation>
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">@(_editId == null ? "Yeni Aday" : "Aday Düzenle")</h5>
+                    <button type="button" class="btn-close" @onclick="CloseModal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-2">
+                        <label class="form-label">Ad</label>
+                        <input class="form-control" @bind="_form.FirstName" />
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label">Soyad</label>
+                        <input class="form-control" @bind="_form.LastName" />
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label">E-posta</label>
+                        <input class="form-control" @bind="_form.Email" />
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="CloseModal">Kapat</button>
+                    <button class="btn btn-primary" @onclick="Save">Kaydet</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private bool _loading = true;
+    private List<CandidateDto> _items = new();
+
+    private bool _showModal = false;
+    private Guid? _editId;
+    private CreateUpdateCandidateDto _form = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        _loading = true;
+        var list = await CandidateApp.GetListAsync(new Volo.Abp.Application.Dtos.PagedAndSortedResultRequestDto());
+        _items = list.Items.ToList();
+        _loading = false;
+    }
+
+    private void NewCandidate()
+    {
+        _editId = null;
+        _form = new CreateUpdateCandidateDto();
+        _showModal = true;
+    }
+
+    private void Edit(CandidateDto dto)
+    {
+        _editId = dto.Id;
+        _form = new CreateUpdateCandidateDto
+        {
+            FirstName = dto.FirstName,
+            LastName = dto.LastName,
+            Email = dto.Email
+        };
+        _showModal = true;
+    }
+
+    private async Task Delete(Guid id)
+    {
+        if (!await JsConfirm("Silmek istediğine emin misin?")) return;
+        await CandidateApp.DeleteAsync(id);
+        await LoadData();
+        StateHasChanged();
+    }
+
+    private async Task Save()
+    {
+        if (_editId == null)
+            await CandidateApp.CreateAsync(_form);
+        else
+            await CandidateApp.UpdateAsync(_editId.Value, _form);
+
+        _showModal = false;
+        await LoadData();
+        StateHasChanged();
+    }
+
+    private void CloseModal() => _showModal = false;
+
+    private async Task<bool> JsConfirm(string message)
+    {
+        await Task.CompletedTask;
+        return true;
+    }
+}

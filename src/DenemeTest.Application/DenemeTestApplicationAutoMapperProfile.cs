@@ -1,4 +1,6 @@
 using AutoMapper;
+using DenemeTest.Exams;
+using DenemeTest.Exams.Dtos;
 
 namespace DenemeTest;
 
@@ -6,8 +8,20 @@ public class DenemeTestApplicationAutoMapperProfile : Profile
 {
     public DenemeTestApplicationAutoMapperProfile()
     {
-        /* You can configure your AutoMapper mapping configuration here.
-         * Alternatively, you can split your mapping configurations
-         * into multiple profile classes for a better organization. */
+        // Test
+        CreateMap<Test, TestDto>();
+        CreateMap<CreateUpdateTestDto, Test>();
+
+        // Question
+        CreateMap<Question, QuestionDto>();
+        CreateMap<CreateUpdateQuestionDto, Question>();
+
+        // QuestionOption
+        CreateMap<QuestionOption, QuestionOptionDto>();
+        CreateMap<CreateUpdateQuestionOptionDto, QuestionOption>();
+
+        // Candidate
+        CreateMap<Candidate, CandidateDto>();
+        CreateMap<CreateUpdateCandidateDto, Candidate>();
     }
 }

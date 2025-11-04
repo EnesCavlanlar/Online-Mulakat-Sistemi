@@ -1,3 +1,230 @@
 ﻿@page "/admin/questions"
+@using DenemeTest.Exams
+@using DenemeTest.Exams.Dtos
+@inject DenemeTest.Application.Exams.IQuestionAppService QuestionApp
+@inject DenemeTest.Application.Exams.ITestAppService TestApp
+
+@* DTO enum için kısa ad *@
+@using QT = DenemeTest.Exams.Dtos.QuestionTypeDto
+
 <h3>Sorular</h3>
-<p>Buraya soru listesi + Ekle/Düzenle modal’ları gelecek.</p>
+
+@if (_loading)
+{
+    <p>Yükleniyor...</p>
+}
+else
+{
+    <div class="d-flex gap-2 mb-3">
+        <button class="btn btn-primary" @onclick="NewQuestion">Yeni Soru</button>
+        <select class="form-select w-auto" @onchange="OnTestFilterChanged">
+            <option value="">(Tüm Testler)</option>
+            @foreach (var t in _tests)
+            {
+                <option value="@t.Id" selected="@(_filterTestId == t.Id.ToString())">@t.Name</option>
+            }
+        </select>
+    </div>
+
+    <table class="table table-striped">
+        <thead>
+            <tr>
+                <th>Test</th>
+                <th>Tür</th>
+                <th>Metin</th>
+                <th>Puan</th>
+                <th>Seçenek</th>
+                <th style="width:140px"></th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var q in _items)
+            {
+                <tr>
+                    <td>@_tests.FirstOrDefault(t => t.Id == q.TestId)?.Name</td>
+                    <td>@q.Type</td>
+                    <td>@q.Text</td>
+                    <td>@q.Points</td>
+                    <td>@(q.Options?.Count ?? 0)</td>
+                    <td>
+                        <button class="btn btn-sm btn-outline-secondary me-2" @onclick="() => Edit(q)">Düzenle</button>
+                        <button class="btn btn-sm btn-outline-danger" @onclick="() => Delete(q.Id)">Sil</button>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@if (_showModal)
+{
+    <div class="modal fade show d-block" style="background-color: rgba(0,0,0,.5);">
+        <div class="modal-dialog modal-lg" @onclick:stopPropagation>
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">@(_editId == null ? "Yeni Soru" : "Soru Düzenle")</h5>
+                    <button type="button" class="btn-close" @onclick="CloseModal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Test</label>
+                            <select class="form-select" @bind="_form.TestId">
+                                @foreach (var t in _tests)
+                                {
+                                    <option value="@t.Id">@t.Name</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Tür</label>
+                            <select class="form-select" @bind="_form.Type">
+                                <option value="@QT.MultipleChoice">Çoktan Seçmeli</option>
+                                <option value="@QT.Classic">Klasik</option>
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Puan</label>
+                            <input type="number" class="form-control" @bind="_form.Points" min="1" />
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">Soru Metni</label>
+                            <textarea class="form-control" rows="3" @bind="_form.Text"></textarea>
+                        </div>
+
+                        @if (_form.Type == QT.MultipleChoice)
+                        {
+                            <div class="col-12">
+                                <label class="form-label d-block">Seçenekler</label>
+
+                                @for (int i = 0; i < _form.Options.Count; i++)
+                                {
+                                    <div class="input-group mb-2">
+                                        <span class="input-group-text">
+                                            <input class="form-check-input mt-0" type="checkbox" @bind="_form.Options[i].IsCorrect" />
+                                        </span>
+                                        <input class="form-control" placeholder="Seçenek metni"
+                                               @bind="_form.Options[i].Text" />
+                                        <button class="btn btn-outline-danger" type="button" @onclick="(() => RemoveOption(i))">Sil</button>
+                                    </div>
+                                }
+                                <button class="btn btn-sm btn-outline-primary" type="button" @onclick="AddOption">Seçenek Ekle</button>
+                            </div>
+                        }
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="CloseModal">Kapat</button>
+                    <button class="btn btn-primary" @onclick="Save">Kaydet</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private bool _loading = true;
+    private List<QuestionDto> _items = new();
+    private List<TestDto> _tests = new();
+    private string? _filterTestId;
+
+    private bool _showModal = false;
+    private Guid? _editId;
+    private CreateUpdateQuestionDto _form = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadTests();
+        await LoadData();
+    }
+
+    private async Task LoadTests()
+    {
+        var list = await TestApp.GetListAsync(new Volo.Abp.Application.Dtos.PagedAndSortedResultRequestDto());
+        _tests = list.Items.ToList();
+    }
+
+    private async Task LoadData()
+    {
+        _loading = true;
+
+        var list = await QuestionApp.GetListAsync(new Volo.Abp.Application.Dtos.PagedAndSortedResultRequestDto());
+        var all = list.Items.ToList();
+
+        if (!string.IsNullOrWhiteSpace(_filterTestId) && Guid.TryParse(_filterTestId, out var tid))
+            _items = all.Where(x => x.TestId == tid).ToList();
+        else
+            _items = all;
+
+        _loading = false;
+    }
+
+    private async Task OnTestFilterChanged(ChangeEventArgs e)
+    {
+        _filterTestId = e.Value?.ToString();
+        await LoadData();
+    }
+
+    private void NewQuestion()
+    {
+        _editId = null;
+        _form = new CreateUpdateQuestionDto
+        {
+            Points = 1,
+            Type = QT.MultipleChoice, // DTO enum
+            Options = new List<CreateUpdateQuestionOptionDto>()
+        };
+        if (_tests.Count > 0) _form.TestId = _tests[0].Id;
+        _showModal = true;
+    }
+
+    private void Edit(QuestionDto dto)
+    {
+        _editId = dto.Id;
+        _form = new CreateUpdateQuestionDto
+        {
+            TestId = dto.TestId,
+            Type = dto.Type, // zaten DTO enum
+            Text = dto.Text,
+            Points = dto.Points,
+            Options = dto.Options?.Select(o => new CreateUpdateQuestionOptionDto { Text = o.Text, IsCorrect = o.IsCorrect }).ToList()
+                      ?? new List<CreateUpdateQuestionOptionDto>()
+        };
+        _showModal = true;
+    }
+
+    private async Task Delete(Guid id)
+    {
+        if (!await JsConfirm("Silmek istediğine emin misin?")) return;
+        await QuestionApp.DeleteAsync(id);
+        await LoadData();
+        StateHasChanged();
+    }
+
+    private async Task Save()
+    {
+        if (_editId == null)
+            await QuestionApp.CreateAsync(_form);
+        else
+            await QuestionApp.UpdateAsync(_editId.Value, _form);
+
+        _showModal = false;
+        await LoadData();
+        StateHasChanged();
+    }
+
+    private void CloseModal() => _showModal = false;
+
+    private void AddOption() => _form.Options.Add(new CreateUpdateQuestionOptionDto { Text = "", IsCorrect = false });
+    private void RemoveOption(int i)
+    {
+        if (i >= 0 && i < _form.Options.Count) _form.Options.RemoveAt(i);
+    }
+
+    // basit confirm (şimdilik true döndürüyoruz)
+    private async Task<bool> JsConfirm(string message)
+    {
+        await Task.CompletedTask;
+        return true;
+    }
+}
