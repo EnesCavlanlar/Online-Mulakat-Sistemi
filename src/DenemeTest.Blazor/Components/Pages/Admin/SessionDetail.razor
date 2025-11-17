@@ -1,0 +1,70 @@
+﻿@page "/admin/session/{SessionId:guid}"
+
+@* DTO artık Application katmanında *@
+@using DenemeTest.Application.Exams
+@inject IReportsAppService ReportsApp
+@inject NavigationManager Nav
+
+<h3>Oturum Detayı</h3>
+
+@if (_detail is null)
+{
+    <p>Yükleniyor...</p>
+}
+else
+{
+    <div class="card mb-3">
+        <div class="card-body">
+            <h5>@_detail.CandidateFirstName @_detail.CandidateLastName</h5>
+            <p><b>E-posta:</b> @_detail.CandidateEmail</p>
+            <p><b>Başlangıç:</b> @(_detail.StartTime?.ToString("yyyy-MM-dd HH:mm") ?? "-")</p>
+            <p><b>Bitiş:</b> @(_detail.EndTime?.ToString("yyyy-MM-dd HH:mm") ?? "-")</p>
+            <p><b>İhlal sayısı:</b> @_detail.Violations</p>
+
+            <a class="btn btn-sm btn-outline-secondary"
+               href="@($"/api/recordings/download?sessionId={SessionId}")"
+               target="_blank">
+                Kaydı indir
+            </a>
+        </div>
+    </div>
+
+    <h5>Cevaplar</h5>
+    @foreach (var ans in _detail.Answers)
+    {
+        <div class="card mb-2">
+            <div class="card-body">
+                <h6>@ans.QuestionText</h6>
+                <p><b>Tip:</b> @ans.QuestionType</p>
+
+                @if (ans.SelectedOptions is not null && ans.SelectedOptions.Any())
+                {
+                    <p><b>Seçilen:</b> @string.Join(", ", ans.SelectedOptions)</p>
+                }
+
+                @if (!string.IsNullOrWhiteSpace(ans.TextAnswer))
+                {
+                    <p><b>Cevap:</b> @ans.TextAnswer</p>
+                }
+
+                @if (!string.IsNullOrWhiteSpace(ans.CodeOutput))
+                {
+                    <div class="alert alert-secondary">
+                        <b>Kod Çıktısı:</b><br />
+                        <pre>@ans.CodeOutput</pre>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+}
+
+@code {
+    [Parameter] public Guid SessionId { get; set; }
+    private SessionDetailDto? _detail;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _detail = await ReportsApp.GetSessionDetailAsync(SessionId);
+    }
+}

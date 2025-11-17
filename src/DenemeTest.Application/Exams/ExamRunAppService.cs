@@ -3,7 +3,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using System.Collections.Generic;
 using DenemeTest.Exams;
-using DenemeTest.Exams.Dtos;                 // ToDto() uzantısı ve DTO’lar
+using DenemeTest.Exams.Dtos;
 using Volo.Abp;
 using Volo.Abp.Application.Services;
 using Volo.Abp.Domain.Repositories;
@@ -18,6 +18,7 @@ namespace DenemeTest.Application.Exams
         private readonly IRepository<QuestionOption, Guid> _optionRepo;
         private readonly IRepository<Answer, Guid> _answerRepo;
         private readonly IRepository<Score, Guid> _scoreRepo;
+        private readonly IRepository<ExamInvitation, Guid> _invRepo;
         private readonly IClassicScoringProvider _classic;
 
         public ExamRunAppService(
@@ -27,6 +28,7 @@ namespace DenemeTest.Application.Exams
             IRepository<QuestionOption, Guid> optionRepo,
             IRepository<Answer, Guid> answerRepo,
             IRepository<Score, Guid> scoreRepo,
+            IRepository<ExamInvitation, Guid> invRepo,
             IClassicScoringProvider classic)
         {
             _sessionRepo = sessionRepo;
@@ -35,8 +37,47 @@ namespace DenemeTest.Application.Exams
             _optionRepo = optionRepo;
             _answerRepo = answerRepo;
             _scoreRepo = scoreRepo;
+            _invRepo = invRepo;
             _classic = classic;
         }
+
+        // -------------------- TOKEN İLE BAŞLAT --------------------
+
+        public async Task<StartWithTokenResultDto> StartWithTokenAsync(string token)
+        {
+            var inv = await _invRepo.FirstOrDefaultAsync(x => x.Token == token);
+            if (inv == null)
+                throw new BusinessException("Invitation:NotFound");
+
+            if (inv.IsUsed)
+                throw new BusinessException("Invitation:AlreadyUsed");
+
+            if (inv.ExpireAt <= DateTime.UtcNow)
+                throw new BusinessException("Invitation:Expired");
+
+            // Kurucu startedAt istiyor -> UtcNow gönderiyoruz
+            var session = new ExamSession(
+                id: GuidGenerator.Create(),
+                testId: inv.TestId,
+                candidateId: inv.CandidateId,
+                startedAt: DateTime.UtcNow
+            );
+
+            await _sessionRepo.InsertAsync(session, autoSave: true);
+
+            inv.MarkUsed();
+            await _invRepo.UpdateAsync(inv, autoSave: true);
+
+            var test = await _testRepo.GetAsync(inv.TestId);
+
+            return new StartWithTokenResultDto
+            {
+                SessionId = session.Id,
+                TestName = test.Name
+            };
+        }
+
+        // -------------------- TESTİ KOŞUYA GETİR --------------------
 
         public async Task<TestRunDto> GetTestForRunAsync(Guid sessionId)
         {
@@ -56,12 +97,15 @@ namespace DenemeTest.Application.Exams
                 TestName = test.Name,
                 ShuffleQuestions = test.ShuffleQuestions,
                 ShuffleOptions = test.ShuffleOptions,
+                DurationMinutes = test.DurationMinutes,
+                StartAt = test.StartAt,
+                EndAt = test.EndAt,
                 Questions = questions.Select(q => new QuestionRunDto
                 {
                     Id = q.Id,
                     Text = q.Text,
-                    // !!! Domain enum -> DTO enum
-                    Type = q.Type.ToDto(),
+                    // Domain enumunu DTO enumuna çevir
+                    Type = MapToDto(q.Type),
                     Points = q.Points,
                     Options = options
                         .Where(o => o.QuestionId == q.Id)
@@ -71,8 +115,9 @@ namespace DenemeTest.Application.Exams
             };
         }
 
-        // Tam nitelikli ad da çalışır; istersen sadece SubmitAnswerDto kullanabilirsin.
-        public async Task SubmitAnswerAsync(DenemeTest.Exams.Dtos.SubmitAnswerDto input)
+        // -------------------- CEVAP KAYDET --------------------
+
+        public async Task SubmitAnswerAsync(SubmitAnswerDto input)
         {
             var sess = await _sessionRepo.GetAsync(input.SessionId);
             if (sess.IsCancelled)
@@ -83,8 +128,13 @@ namespace DenemeTest.Application.Exams
 
             if (exist == null)
             {
-                exist = new Answer(GuidGenerator.Create(), input.SessionId, input.QuestionId,
-                                   input.TextAnswer, input.SelectedOptionIds);
+                exist = new Answer(
+                    GuidGenerator.Create(),
+                    input.SessionId,
+                    input.QuestionId,
+                    input.TextAnswer,
+                    input.SelectedOptionIds
+                );
                 await _answerRepo.InsertAsync(exist, autoSave: true);
             }
             else
@@ -94,6 +144,8 @@ namespace DenemeTest.Application.Exams
                 await _answerRepo.UpdateAsync(exist, autoSave: true);
             }
         }
+
+        // -------------------- PUAN HESAPLA --------------------
 
         public async Task<int> ComputeAndSaveScoreAsync(Guid sessionId)
         {
@@ -118,55 +170,53 @@ namespace DenemeTest.Application.Exams
                     var correct = options.Where(o => o.QuestionId == q.Id && o.IsCorrect)
                                          .Select(o => o.Id).OrderBy(x => x).ToArray();
                     var chosen = (ans?.SelectedOptionIds ?? Array.Empty<Guid>())
-                                 .OrderBy(x => x).ToArray();
+                                  .OrderBy(x => x).ToArray();
 
                     if (correct.SequenceEqual(chosen))
                         earned += q.Points;
                 }
-                else
+                else if (q.Type == QuestionType.Classic)
                 {
-                    var candText = ans?.TextAnswer ?? "";
+                    var candText = ans?.TextAnswer ?? string.Empty;
                     (int score0_100, string _) = await _classic.ScoreAsync(q.Text, candText);
                     earned += (int)Math.Round(q.Points * (score0_100 / 100.0));
+                }
+                else if (q.Type == QuestionType.Coding)
+                {
+                    // TODO: Kod soruları için test-case tabanlı puanlama
                 }
             }
 
             var finalScore = (int)Math.Round(100.0 * earned / totalPoints);
-            var sc = new Score(GuidGenerator.Create(), sessionId, finalScore,
-                               "Auto-computed (MCQ + stub classic)");
+
+            // Eski skor varsa silip yeniden oluştur (entity set edilebilir değil)
+            var existing = await _scoreRepo.FirstOrDefaultAsync(s => s.ExamSessionId == sessionId);
+            if (existing != null)
+            {
+                await _scoreRepo.DeleteAsync(existing, autoSave: true);
+            }
+
+            // Yeni (çalışan)
+            var sc = new Score(
+                GuidGenerator.Create(),
+                sessionId,
+                finalScore,
+                "Auto-computed (MCQ + classic; coding TODO)"
+            );
             await _scoreRepo.InsertAsync(sc, autoSave: true);
+            await _scoreRepo.InsertAsync(sc, autoSave: true);
+
             return finalScore;
         }
-    }
 
-    public interface IExamRunAppService
-    {
-        Task<TestRunDto> GetTestForRunAsync(Guid sessionId);
-        Task SubmitAnswerAsync(DenemeTest.Exams.Dtos.SubmitAnswerDto input);
-        Task<int> ComputeAndSaveScoreAsync(Guid sessionId);
-    }
-}
-// Add the following extension method to convert QuestionType to QuestionTypeDto.
 
-public static class QuestionTypeExtensions
-{
-    public static QuestionTypeDto ToDto(this QuestionType questionType)
-    {
-        return questionType switch
+        // -------- helpers --------
+        private static QuestionTypeDto MapToDto(QuestionType t) => t switch
         {
             QuestionType.MultipleChoice => QuestionTypeDto.MultipleChoice,
             QuestionType.Classic => QuestionTypeDto.Classic,
-            _ => throw new ArgumentOutOfRangeException(nameof(questionType), questionType, null)
+            QuestionType.Coding => QuestionTypeDto.Coding,
+            _ => QuestionTypeDto.Classic
         };
     }
-}
-// Ensure the namespace containing the extension method is included at the top of the file.
-
-public class SubmitAnswerDto
-{
-    public Guid QuestionId { get; set; }
-    public Guid? SelectedOptionId { get; set; }
-    public string? TextAnswer { get; set; }
-    public Guid SessionId { get; set; } // Added property
-    public Guid[]? SelectedOptionIds { get; set; } // Fix: Added missing property
 }

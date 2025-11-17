@@ -80,10 +80,21 @@ public class DenemeTestDbContext :
         {
             b.ToTable("AppTests");
             b.ConfigureByConvention();
+
             b.Property(x => x.Name).IsRequired().HasMaxLength(256);
             b.Property(x => x.Description).HasMaxLength(2000);
             b.Property(x => x.ShuffleQuestions);
             b.Property(x => x.ShuffleOptions);
+
+            // Yeni alanlar
+            b.Property(x => x.DurationMinutes)
+                .IsRequired()
+                .HasDefaultValue(60);
+
+            b.Property(x => x.PassScore)
+                .IsRequired()
+                .HasDefaultValue(50);
+
             b.HasMany(x => x.Questions)
              .WithOne()
              .HasForeignKey(q => q.TestId)
@@ -115,9 +126,17 @@ public class DenemeTestDbContext :
         {
             b.ToTable("AppCandidates");
             b.ConfigureByConvention();
+
             b.Property(x => x.FirstName).IsRequired().HasMaxLength(128);
             b.Property(x => x.LastName).IsRequired().HasMaxLength(128);
             b.Property(x => x.Email).IsRequired().HasMaxLength(256);
+
+            // Yeni alan
+            b.Property(x => x.Status)
+             .IsRequired()
+             .HasMaxLength(64)
+             .HasDefaultValue("Pending");
+
             b.HasIndex(x => x.Email).IsUnique();
         });
 
@@ -125,8 +144,33 @@ public class DenemeTestDbContext :
         {
             b.ToTable("AppExamInvitations");
             b.ConfigureByConvention();
-            b.Property(x => x.Token).IsRequired().HasMaxLength(64);
+
+            b.Property(x => x.Token)
+             .IsRequired()
+             .HasMaxLength(64);
+
+            b.Property(x => x.ExpireAt)
+             .IsRequired();
+
+            b.Property(x => x.SentAt);
+            b.Property(x => x.UsedAt);
+
+            b.Property(x => x.IsUsed)
+             .IsRequired()
+             .HasDefaultValue(false);
+
             b.HasIndex(x => x.Token).IsUnique();
+            b.HasIndex(x => new { x.CandidateId, x.TestId });
+
+            b.HasOne<Candidate>()
+             .WithMany()
+             .HasForeignKey(x => x.CandidateId)
+             .OnDelete(DeleteBehavior.Cascade);
+
+            b.HasOne<Test>()
+             .WithMany()
+             .HasForeignKey(x => x.TestId)
+             .OnDelete(DeleteBehavior.Cascade);
         });
 
         builder.Entity<ExamSession>(b =>
@@ -163,6 +207,5 @@ public class DenemeTestDbContext :
         });
 
         /* your custom tables... */
-        // builder.Entity<YourEntity>(...)
     }
 }

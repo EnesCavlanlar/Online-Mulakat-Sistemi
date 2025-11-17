@@ -10,12 +10,16 @@
 }
 else
 {
-    <button class="btn btn-primary" @onclick="NewTest">Yeni Test</button>
+    <button class="btn btn-primary mb-3" @onclick="ShowCreateModal">Yeni Test</button>
 
-    <table class="table mt-3">
+    <table class="table table-striped">
         <thead>
             <tr>
                 <th>Ad</th>
+                <th>Süre (dk)</th>
+                <th>Başlangıç</th>
+                <th>Bitiş</th>
+                <th>Geçme Puanı</th>
                 <th>Ş. Sorular</th>
                 <th>Ş. Şıklar</th>
                 <th style="width:160px">İşlemler</th>
@@ -26,6 +30,10 @@ else
             {
                 <tr>
                     <td>@t.Name</td>
+                    <td>@t.DurationMinutes</td>
+                    <td>@(t.StartAt?.ToString("g") ?? "-")</td>
+                    <td>@(t.EndAt?.ToString("g") ?? "-")</td>
+                    <td>@t.PassScore</td>
                     <td>@(t.ShuffleQuestions ? "Evet" : "Hayır")</td>
                     <td>@(t.ShuffleOptions ? "Evet" : "Hayır")</td>
                     <td>
@@ -38,9 +46,69 @@ else
     </table>
 }
 
+<!-- Basit modal -->
+@if (_showModal)
+{
+    <div class="modal fade show d-block" style="background: rgba(0,0,0,.5);">
+        <div class="modal-dialog">
+            <div class="modal-content p-3">
+                <h5 class="mb-3">Yeni Test</h5>
+
+                <div class="mb-2">
+                    <label>Ad</label>
+                    <InputText @bind-Value="CreateModel.Name" class="form-control" />
+                </div>
+
+                <div class="mb-2">
+                    <label>Açıklama</label>
+                    <InputTextArea @bind-Value="CreateModel.Description" class="form-control" />
+                </div>
+
+                <div class="mb-2">
+                    <label>Süre (dakika)</label>
+                    <InputNumber @bind-Value="CreateModel.DurationMinutes" class="form-control" />
+                </div>
+
+                <div class="mb-2">
+                    <label>Başlangıç</label>
+                    <InputDate @bind-Value="CreateModel.StartAt" class="form-control" />
+                </div>
+
+                <div class="mb-2">
+                    <label>Bitiş</label>
+                    <InputDate @bind-Value="CreateModel.EndAt" class="form-control" />
+                </div>
+
+                <div class="mb-2">
+                    <label>Geçme Puanı</label>
+                    <InputNumber @bind-Value="CreateModel.PassScore" class="form-control" />
+                </div>
+
+                <div class="form-check mb-2">
+                    <InputCheckbox @bind-Value="CreateModel.ShuffleQuestions" class="form-check-input" />
+                    <label class="form-check-label">Soruları karıştır</label>
+                </div>
+
+                <div class="form-check mb-3">
+                    <InputCheckbox @bind-Value="CreateModel.ShuffleOptions" class="form-check-input" />
+                    <label class="form-check-label">Şıkları karıştır</label>
+                </div>
+
+                <div class="d-flex justify-content-end">
+                    <button class="btn btn-secondary me-2" @onclick="HideModal">Vazgeç</button>
+                    <button class="btn btn-primary" @onclick="SaveTest">Kaydet</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
 @code {
     private bool _loading = true;
     private List<TestDto> _items = new();
+
+    private bool _showModal = false;
+    private CreateUpdateTestDto CreateModel = new();
 
     protected override async Task OnInitializedAsync()
     {
@@ -54,28 +122,42 @@ else
         _loading = false;
     }
 
-    private async Task NewTest()
+    private void ShowCreateModal()
     {
-        var dto = new CreateUpdateTestDto
+        CreateModel = new CreateUpdateTestDto
         {
-            Name = "Deneme Testi",
-            Description = "İlk test",
+            DurationMinutes = 60,
+            PassScore = 50,
             ShuffleQuestions = true,
             ShuffleOptions = true
         };
-        await TestApp.CreateAsync(dto);
+        _showModal = true;
+    }
+
+    private void HideModal()
+    {
+        _showModal = false;
+    }
+
+    private async Task SaveTest()
+    {
+        await TestApp.CreateAsync(CreateModel);
+        _showModal = false;
         await LoadAsync();
         StateHasChanged();
     }
 
     private async Task EditTest(Guid id)
     {
-        // Basit örnek: adı sonuna (Düzenlendi) ekleyelim
-        var cur = (await TestApp.GetAsync(id));
+        var cur = await TestApp.GetAsync(id);
         var upd = new CreateUpdateTestDto
         {
             Name = cur.Name + " (Düzenlendi)",
             Description = cur.Description,
+            DurationMinutes = cur.DurationMinutes,
+            StartAt = cur.StartAt,
+            EndAt = cur.EndAt,
+            PassScore = cur.PassScore,
             ShuffleQuestions = cur.ShuffleQuestions,
             ShuffleOptions = cur.ShuffleOptions
         };

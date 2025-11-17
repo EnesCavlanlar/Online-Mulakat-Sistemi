@@ -2,7 +2,7 @@
 @using DenemeTest.Exams.Dtos
 @inject DenemeTest.Application.Exams.ITestAppService TestApp
 @inject DenemeTest.Application.Exams.ICandidateAppService CandidateApp
-@inject DenemeTest.Application.Exams.IInvitationAppService InvitationApp
+@inject DenemeTest.Exams.IInvitationAppService InvitationApp   
 
 <h3>Aday Davet Et</h3>
 
@@ -37,7 +37,6 @@ else
 
                 <div class="col-md-6">
                     <label class="form-label">Son Geçerlilik</label>
-                    <!-- DateTime? ile bind; format önemli -->
                     <input type="datetime-local"
                            class="form-control"
                            @bind="_expireLocal"
@@ -55,8 +54,7 @@ else
     @if (!string.IsNullOrWhiteSpace(_resultToken))
     {
         <div class="alert alert-success mt-3">
-            Davet oluşturuldu. Token: <code>@_resultToken</code><br />
-            MailHog üzerinde görmelisin: <strong>http://localhost:8025</strong>
+            Davet oluşturuldu. Token: <code>@_resultToken</code>
         </div>
     }
 }
@@ -66,10 +64,11 @@ else
     private List<TestDto> _tests = new();
     private List<CandidateDto> _candidates = new();
 
-    private SendInvitationDto _form = new();
+    // ✅ Doğru DTO
+    private CreateExamInvitationDto _form = new();
     private string? _resultToken;
 
-    // ⬇️ string yerine DateTime? kullanıyoruz
+    // Yerel tarih-saat inputu
     private DateTime? _expireLocal;
 
     protected override async Task OnInitializedAsync()
@@ -83,17 +82,19 @@ else
         if (_tests.Count > 0) _form.TestId = _tests[0].Id;
         if (_candidates.Count > 0) _form.CandidateId = _candidates[0].Id;
 
-        // default: +3 gün (LOCAL)
-        _expireLocal = DateTime.Now.AddDays(3); // kullanıcı yerel saati
+        // Varsayılan: +3 gün (local)
+        _expireLocal = DateTime.Now.AddDays(3);
+
         _loading = false;
     }
 
     private async Task Send()
     {
-        // _expireLocal null ise +3 gün; varsa UTC'ye çevir.
+        // null ise +3 gün; UTC'ye çevir
         _form.ExpireAt = (_expireLocal ?? DateTime.Now.AddDays(3)).ToUniversalTime();
 
-        var res = await InvitationApp.SendAsync(_form);
+        // ✅ Doğru service metodu
+        var res = await InvitationApp.CreateAsync(_form);
         _resultToken = res.Token;
         StateHasChanged();
     }

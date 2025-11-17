@@ -1,10 +1,13 @@
 ﻿@page "/exam/runner/{SessionId:guid}"
 @using DenemeTest.Exams
 @using DenemeTest.Exams.Dtos
+@using DenemeTest.Application.Exams
 @using Microsoft.JSInterop
 @using Microsoft.Extensions.Configuration
-@inject DenemeTest.Application.Exams.IExamSessionAppService SessionApp
-@inject DenemeTest.Application.Exams.IExamRunAppService RunApp
+
+@inject IExamSessionAppService SessionApp
+@inject IExamRunAppService RunApp
+@inject ICodeExecutionAppService CodeExecApp
 @inject IJSRuntime JS
 @inject NavigationManager Nav
 @inject IConfiguration Config
@@ -50,6 +53,38 @@ else
                     </div>
                 }
             }
+            else if (_current.Type == QT.Coding)
+            {
+                <label class="form-label">Kodunuzu buraya yazın</label>
+                <textarea class="form-control font-monospace" rows="12" @bind="_classicText"></textarea>
+
+                <div class="mt-2 d-flex gap-2 align-items-center">
+                    <button class="btn btn-outline-primary" @onclick="RunCode" disabled="@_isRunning">
+                        Çalıştır
+                    </button>
+
+                    @if (_isRunning)
+                    {
+                        <span class="text-muted">Çalıştırılıyor...</span>
+                    }
+                </div>
+
+                @if (!string.IsNullOrWhiteSpace(_runOutput))
+                {
+                    <div class="alert alert-success mt-3">
+                        <strong>Çıktı:</strong>
+                        <pre class="mb-0">@_runOutput</pre>
+                    </div>
+                }
+
+                @if (!string.IsNullOrWhiteSpace(_runError))
+                {
+                    <div class="alert alert-danger mt-3">
+                        <strong>Hata:</strong>
+                        <pre class="mb-0">@_runError</pre>
+                    </div>
+                }
+            }
             else
             {
                 <textarea class="form-control" rows="6" @bind="_classicText"></textarea>
@@ -76,8 +111,14 @@ else
 
     // cevap state
     private readonly Dictionary<Guid, HashSet<Guid>> _selected = new(); // questionId -> optionIds
-    private readonly Dictionary<Guid, string> _classics = new();        // questionId -> text
+    private readonly Dictionary<Guid, string> _classics = new();        // questionId -> text / code
     private string _classicText = "";
+
+    // kod çalıştırma state
+    private bool _isRunning = false;
+    private string _runOutput = string.Empty;
+    private string _runError = string.Empty;
+    private bool _runSuccess = false;
 
     // proctoring & kayıt
     private DotNetObjectReference<RunnerCallbacks>? _objRef;
@@ -148,6 +189,13 @@ else
             _selected.Remove(_current.Id);
             _classicText = _classics.TryGetValue(_current.Id, out var t) ? t : "";
         }
+
+        // soru değişince kod çalıştırma sonuçlarını temizle
+        _runOutput = string.Empty;
+        _runError = string.Empty;
+        _isRunning = false;
+        _runSuccess = false;
+
         StateHasChanged();
     }
 
@@ -187,6 +235,45 @@ else
                 QuestionId = _current.Id,
                 TextAnswer = _classicText ?? ""
             });
+        }
+    }
+
+    private async Task RunCode()
+    {
+        // sadece coding sorularında çalışmalı
+        if (_current.Type != QT.Coding)
+            return;
+
+        _isRunning = true;
+        _runOutput = string.Empty;
+        _runError = string.Empty;
+        StateHasChanged();
+
+        try
+        {
+            var request = new RunCodeRequestDto
+            {
+                SessionId = SessionId,
+                QuestionId = _current.Id,
+                Code = _classicText ?? string.Empty,
+                Language = "csharp"
+            };
+
+            var result = await CodeExecApp.RunAsync(request);
+            _runSuccess = result.Success;
+            _runOutput = result.Output;
+            _runError = result.Error;
+        }
+        catch (Exception ex)
+        {
+            _runSuccess = false;
+            _runOutput = string.Empty;
+            _runError = $"Kod çalıştırma sırasında beklenmeyen bir hata oluştu: {ex.Message}";
+        }
+        finally
+        {
+            _isRunning = false;
+            StateHasChanged();
         }
     }
 

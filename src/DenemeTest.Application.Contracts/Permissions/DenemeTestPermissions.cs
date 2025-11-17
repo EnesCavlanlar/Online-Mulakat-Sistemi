@@ -4,8 +4,13 @@ public static class DenemeTestPermissions
 {
     public const string GroupName = "DenemeTest";
 
-
-    
-    //Add your own permission names. Example:
-    //public const string MyPermission1 = GroupName + ".MyPermission1";
+    public static class Exams
+    {
+        public const string Default = GroupName + ".Exams";
+        public const string Reports = Default + ".Reports";
+        public const string Questions = Default + ".Questions";
+        public const string Candidates = Default + ".Candidates";
+        public const string Invitations = Default + ".Invitations";
+        public const string Tests = Default + ".Tests";
+    }
 }

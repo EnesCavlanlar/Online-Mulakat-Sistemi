@@ -1,6 +1,8 @@
 ﻿@page "/admin/reports"
+@using System.Linq
 @using DenemeTest.Exams.Dtos
 @inject DenemeTest.Application.Exams.IReportsAppService ReportsApp
+@inject NavigationManager Nav
 
 <h3>Raporlar</h3>
 
@@ -12,13 +14,17 @@
         <option value="30">İlk 30</option>
         <option value="50">İlk 50</option>
     </select>
+
+    <button class="btn btn-outline-primary" @onclick="Reload">
+        Yenile
+    </button>
 </div>
 
-@if (_items is null)
+@if (_items == null)
 {
     <p>Yükleniyor...</p>
 }
-else if (_items.Length == 0)
+else if (!_items.Any())
 {
     <div class="alert alert-info">Henüz puanlanmış sınav bulunmuyor.</div>
 }
@@ -31,6 +37,8 @@ else
                 <th>Ad Soyad</th>
                 <th>E-posta</th>
                 <th style="width:100px">Puan</th>
+                <th style="width:150px">Kayıt</th>
+                <th style="width:120px">Detay</th>
             </tr>
         </thead>
         <tbody>
@@ -44,6 +52,19 @@ else
                     <td>@row.FirstName @row.LastName</td>
                     <td>@row.Email</td>
                     <td><strong>@row.Score</strong></td>
+                    <td>
+                        <a class="btn btn-sm btn-outline-secondary"
+                           href="@($"/api/recordings/download?sessionId={row.ExamSessionId}")"
+                           target="_blank">
+                            Kaydı indir
+                        </a>
+                    </td>
+                    <td>
+                        <button class="btn btn-sm btn-primary"
+                                @onclick="() => GoToDetail(row.ExamSessionId)">
+                            Detay
+                        </button>
+                    </td>
                 </tr>
             }
         </tbody>
@@ -61,5 +82,10 @@ else
         _items = null;
         _items = await ReportsApp.GetLeaderboardAsync(_take);
         StateHasChanged();
+    }
+
+    void GoToDetail(Guid id)
+    {
+        Nav.NavigateTo($"/admin/session/{id}");
     }
 }

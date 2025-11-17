@@ -3,6 +3,7 @@ using System;
 using DenemeTest.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using Volo.Abp.EntityFrameworkCore;
@@ -12,9 +13,11 @@ using Volo.Abp.EntityFrameworkCore;
 namespace DenemeTest.Migrations
 {
     [DbContext(typeof(DenemeTestDbContext))]
-    partial class DenemeTestDbContextModelSnapshot : ModelSnapshot
+    [Migration("20251105113903_Add_TimeWindow_To_Tests")]
+    partial class Add_TimeWindow_To_Tests
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -150,13 +153,6 @@ namespace DenemeTest.Migrations
                         .HasMaxLength(128)
                         .HasColumnType("character varying(128)");
 
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)")
-                        .HasDefaultValue("Pending");
-
                     b.HasKey("Id");
 
                     b.HasIndex("Email")
@@ -211,9 +207,7 @@ namespace DenemeTest.Migrations
                         .HasColumnName("IsDeleted");
 
                     b.Property<bool>("IsUsed")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("boolean")
-                        .HasDefaultValue(false);
+                        .HasColumnType("boolean");
 
                     b.Property<DateTime?>("LastModificationTime")
                         .HasColumnType("timestamp with time zone")
@@ -223,9 +217,6 @@ namespace DenemeTest.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("LastModifierId");
 
-                    b.Property<DateTime?>("SentAt")
-                        .HasColumnType("timestamp with time zone");
-
                     b.Property<Guid>("TestId")
                         .HasColumnType("uuid");
 
@@ -234,17 +225,10 @@ namespace DenemeTest.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
 
-                    b.Property<DateTime?>("UsedAt")
-                        .HasColumnType("timestamp with time zone");
-
                     b.HasKey("Id");
-
-                    b.HasIndex("TestId");
 
                     b.HasIndex("Token")
                         .IsUnique();
-
-                    b.HasIndex("CandidateId", "TestId");
 
                     b.ToTable("AppExamInvitations", (string)null);
                 });
@@ -612,11 +596,6 @@ namespace DenemeTest.Migrations
                         .HasMaxLength(2000)
                         .HasColumnType("character varying(2000)");
 
-                    b.Property<int>("DurationMinutes")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(60);
-
                     b.Property<DateTime?>("EndAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -643,11 +622,6 @@ namespace DenemeTest.Migrations
                         .IsRequired()
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)");
-
-                    b.Property<double>("PassScore")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("double precision")
-                        .HasDefaultValue(50.0);
 
                     b.Property<bool>("ShuffleOptions")
                         .HasColumnType("boolean");
@@ -2514,21 +2488,6 @@ namespace DenemeTest.Migrations
                     b.HasKey("TenantId", "Name");
 
                     b.ToTable("AbpTenantConnectionStrings", (string)null);
-                });
-
-            modelBuilder.Entity("DenemeTest.Exams.ExamInvitation", b =>
-                {
-                    b.HasOne("DenemeTest.Exams.Candidate", null)
-                        .WithMany()
-                        .HasForeignKey("CandidateId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("DenemeTest.Exams.Test", null)
-                        .WithMany()
-                        .HasForeignKey("TestId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
                 });
 
             modelBuilder.Entity("DenemeTest.Exams.Question", b =>

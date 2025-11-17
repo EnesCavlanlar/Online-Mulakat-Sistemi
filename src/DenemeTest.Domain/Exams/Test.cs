@@ -13,14 +13,25 @@ public class Test : FullAuditedAggregateRoot<Guid>
     public bool ShuffleQuestions { get; protected set; }
     public bool ShuffleOptions { get; protected set; }
 
+    // ✅ Yeni alanlar
+    public int DurationMinutes { get; protected set; }      // Sınav süresi (dakika)
+    public double PassScore { get; protected set; }         // Geçme puanı
+
     public virtual ICollection<Question> Questions { get; protected set; }
 
     protected Test() { }
 
-    public Test(Guid id, string name, string? description = null,
-        DateTime? startAt = null, DateTime? endAt = null,
-        bool shuffleQuestions = true, bool shuffleOptions = true)
-        : base(id)
+    public Test(
+        Guid id,
+        string name,
+        string? description = null,
+        DateTime? startAt = null,
+        DateTime? endAt = null,
+        bool shuffleQuestions = true,
+        bool shuffleOptions = true,
+        int durationMinutes = 60,
+        double passScore = 50
+    ) : base(id)
     {
         Name = name;
         Description = description;
@@ -28,11 +39,21 @@ public class Test : FullAuditedAggregateRoot<Guid>
         EndAt = endAt;
         ShuffleQuestions = shuffleQuestions;
         ShuffleOptions = shuffleOptions;
+        DurationMinutes = durationMinutes;
+        PassScore = passScore;
         Questions = new List<Question>();
     }
 
-    public void Update(string name, string? description, DateTime? startAt, DateTime? endAt,
-        bool shuffleQuestions, bool shuffleOptions)
+    public void Update(
+        string name,
+        string? description,
+        DateTime? startAt,
+        DateTime? endAt,
+        bool shuffleQuestions,
+        bool shuffleOptions,
+        int durationMinutes,
+        double passScore
+    )
     {
         Name = name;
         Description = description;
@@ -40,5 +61,7 @@ public class Test : FullAuditedAggregateRoot<Guid>
         EndAt = endAt;
         ShuffleQuestions = shuffleQuestions;
         ShuffleOptions = shuffleOptions;
+        DurationMinutes = durationMinutes;
+        PassScore = passScore;
     }
 }

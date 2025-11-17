@@ -1,10 +1,9 @@
-﻿using DenemeTest.Localization;
-using DenemeTest.MultiTenancy;
-using DenemeTest.Blazor.Menus; // DenemeTestMenus için
+﻿using System.Linq;
 using System.Threading.Tasks;
-using Volo.Abp.Identity.Blazor;
-using Volo.Abp.SettingManagement.Blazor.Menus;
-using Volo.Abp.TenantManagement.Blazor.Navigation;
+using DenemeTest.Localization;
+using DenemeTest.Permissions;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.Extensions.DependencyInjection;
 using Volo.Abp.UI.Navigation;
 
 namespace DenemeTest.Blazor.Menus;
@@ -19,49 +18,100 @@ public class DenemeTestMenuContributor : IMenuContributor
         }
     }
 
-    private Task ConfigureMainMenuAsync(MenuConfigurationContext context)
+    private async Task ConfigureMainMenuAsync(MenuConfigurationContext context)
     {
         var l = context.GetLocalizer<DenemeTestResource>();
+        var auth = context.ServiceProvider.GetRequiredService<IAuthorizationService>();
 
-        // Home
+        // ==========================
+        //  HOME
+        // ==========================
         context.Menu.Items.Insert(
             0,
             new ApplicationMenuItem(
                 DenemeTestMenus.Home,
                 l["Menu:Home"],
                 "/",
-                icon: "fas fa-home",
-                order: 1
+                icon: "fa fa-home"
             )
         );
 
-        // ---- Admin kökü ve alt menüler ----
-        var admin = new ApplicationMenuItem(DenemeTestMenus.Admin, "Admin", icon: "fas fa-tools", order: 2);
+        // ==========================
+        //  EXAM ADMIN MENÜSÜ
+        // ==========================
+        var adminGroup = new ApplicationMenuItem(
+            "Admin",
+            l["Menu:Admin"],
+            icon: "fa fa-tools"
+        );
 
-        admin.AddItem(new ApplicationMenuItem(DenemeTestMenus.Questions, "Sorular", url: "/admin/questions", icon: "fas fa-question"));
-        admin.AddItem(new ApplicationMenuItem(DenemeTestMenus.Tests, "Testler", url: "/admin/tests", icon: "fas fa-list-check"));
-        admin.AddItem(new ApplicationMenuItem(DenemeTestMenus.Candidates, "Adaylar", url: "/admin/candidates", icon: "fas fa-user"));
-        admin.AddItem(new ApplicationMenuItem(DenemeTestMenus.Invitations, "Davet Gönder", url: "/admin/invitations", icon: "fas fa-envelope"));
-        admin.AddItem(new ApplicationMenuItem(DenemeTestMenus.Reports, "Raporlar", url: "/admin/reports", icon: "fas fa-chart-line"));
-
-        context.Menu.AddItem(admin);
-
-        // ---- ABP Administration grubu ----
-        var administration = context.Menu.GetAdministration();
-        administration.Order = 6;
-
-        if (MultiTenancyConsts.IsEnabled)
+        // Sorular
+        if (await auth.IsGrantedAsync(DenemeTestPermissions.Exams.Questions))
         {
-            administration.SetSubItemOrder(TenantManagementMenuNames.GroupName, 1);
-        }
-        else
-        {
-            administration.TryRemoveMenuItem(TenantManagementMenuNames.GroupName);
+            adminGroup.AddItem(
+                new ApplicationMenuItem(
+                    "Admin.Questions",
+                    "Sorular",
+                    url: "/admin/questions"
+                )
+            );
         }
 
-        administration.SetSubItemOrder(IdentityMenuNames.GroupName, 2);
-        administration.SetSubItemOrder(SettingManagementMenus.GroupName, 3);
+        // Testler
+        if (await auth.IsGrantedAsync(DenemeTestPermissions.Exams.Tests))
+        {
+            adminGroup.AddItem(
+                new ApplicationMenuItem(
+                    "Admin.Tests",
+                    "Testler",
+                    url: "/admin/tests"
+                )
+            );
+        }
 
-        return Task.CompletedTask;
+        // Adaylar
+        if (await auth.IsGrantedAsync(DenemeTestPermissions.Exams.Candidates))
+        {
+            adminGroup.AddItem(
+                new ApplicationMenuItem(
+                    "Admin.Candidates",
+                    "Adaylar",
+                    url: "/admin/candidates"
+                )
+            );
+        }
+
+        // Davet Gönder
+        if (await auth.IsGrantedAsync(DenemeTestPermissions.Exams.Invitations))
+        {
+            adminGroup.AddItem(
+                new ApplicationMenuItem(
+                    "Admin.Invitations",
+                    "Davet Gönder",
+                    url: "/admin/invitations"
+                )
+            );
+        }
+
+        // Raporlar
+        if (await auth.IsGrantedAsync(DenemeTestPermissions.Exams.Reports))
+        {
+            adminGroup.AddItem(
+                new ApplicationMenuItem(
+                    "Admin.Reports",
+                    "Raporlar",
+                    url: "/admin/reports"
+                )
+            );
+        }
+
+        // Eğer kullanıcının en az bir Exams izni varsa Admin grubu menüye eklensin
+        if (adminGroup.Items.Any())
+        {
+            context.Menu.AddItem(adminGroup);
+        }
+
+        // Not: ABP'nin kendi "Administration" grubu (Identity, Tenant, Settings)
+        // başka modüller tarafından ekleniyor; burada özel bir sıralama yapmıyoruz.
     }
 }

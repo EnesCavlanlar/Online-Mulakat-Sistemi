@@ -81,8 +81,10 @@ else
                             <select class="form-select" @bind="_form.Type">
                                 <option value="@QT.MultipleChoice">Çoktan Seçmeli</option>
                                 <option value="@QT.Classic">Klasik</option>
+                                <option value="@QT.Coding">Kodlama Sorusu</option>
                             </select>
                         </div>
+
                         <div class="col-md-3">
                             <label class="form-label">Puan</label>
                             <input type="number" class="form-control" @bind="_form.Points" min="1" />
