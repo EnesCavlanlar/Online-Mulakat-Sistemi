@@ -12,4 +12,9 @@ public class LeaderboardItemDto
 
     // İleride kayıt indirme için kullanılabilir:
     public Guid ExamSessionId { get; set; }
+
+    // 🔽 Proctoring / oturum durumu için ek alanlar
+    public bool IsCancelled { get; set; }
+    public DateTime? FinishedAt { get; set; }
+    public int ViolationCount { get; set; }
 }

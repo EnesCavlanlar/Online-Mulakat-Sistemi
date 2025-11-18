@@ -1,21 +1,26 @@
 ﻿using System;
 using Volo.Abp.Domain.Entities.Auditing;
 
-namespace DenemeTest.Exams;
-
-/// <summary>
-/// Kod soruları için giriş/çıkış ve ağırlık tanımı.
-/// </summary>
-public class CodeTestCase : AuditedAggregateRoot<Guid>
+namespace DenemeTest.Exams
 {
-    public Guid QuestionId { get; set; }
+    public class CodeTestCase : FullAuditedAggregateRoot<Guid>
+    {
+        public Guid QuestionId { get; set; }
+        public string? Input { get; set; }
+        public string? ExpectedOutput { get; set; }
+        public int Weight { get; set; }
 
-    /// <summary>Program stdin olarak alacak.</summary>
-    public string Input { get; set; } = "";
+        protected CodeTestCase()
+        {
+        }
 
-    /// <summary>stdout ile birebir karşılaştırılır (Trim).</summary>
-    public string ExpectedOutput { get; set; } = "";
-
-    /// <summary>Her testcase'in puana katkısı (varsayılan 1).</summary>
-    public int Weight { get; set; } = 1;
+        public CodeTestCase(Guid id, Guid questionId, string? input, string? expectedOutput, int weight)
+            : base(id)
+        {
+            QuestionId = questionId;
+            Input = input;
+            ExpectedOutput = expectedOutput;
+            Weight = weight <= 0 ? 1 : weight;
+        }
+    }
 }

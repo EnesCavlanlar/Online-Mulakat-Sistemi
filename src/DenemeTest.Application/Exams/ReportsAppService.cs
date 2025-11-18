@@ -43,6 +43,8 @@ namespace DenemeTest.Application.Exams
             _optionRepo = optionRepo;
         }
 
+        // -------------------- LEADERBOARD --------------------
+
         public async Task<LeaderboardItemDto[]> GetLeaderboardAsync(int take)
         {
             var scores = (await _scoreRepo.GetListAsync())
@@ -51,24 +53,40 @@ namespace DenemeTest.Application.Exams
                 .Take(Math.Max(1, take))
                 .ToList();
 
+            if (!scores.Any())
+            {
+                return Array.Empty<LeaderboardItemDto>();
+            }
+
             var sessionIds = scores.Select(s => s.ExamSessionId).Distinct().ToList();
             var sessions = await _sessionRepo.GetListAsync(x => sessionIds.Contains(x.Id));
+
             var candidateIds = sessions.Select(s => s.CandidateId).Distinct().ToList();
             var candidates = await _candidateRepo.GetListAsync(x => candidateIds.Contains(x.Id));
 
-            return (from sc in scores
-                    join se in sessions on sc.ExamSessionId equals se.Id
-                    join ca in candidates on se.CandidateId equals ca.Id
-                    select new LeaderboardItemDto
-                    {
-                        CandidateId = ca.Id,
-                        FirstName = ca.FirstName,
-                        LastName = ca.LastName,
-                        Email = ca.Email,
-                        Score = sc.Value,
-                        ExamSessionId = se.Id
-                    }).ToArray();
+            var query =
+                from sc in scores
+                join se in sessions on sc.ExamSessionId equals se.Id
+                join ca in candidates on se.CandidateId equals ca.Id
+                select new LeaderboardItemDto
+                {
+                    CandidateId = ca.Id,
+                    FirstName = ca.FirstName,
+                    LastName = ca.LastName,
+                    Email = ca.Email,
+                    Score = sc.Value,
+                    ExamSessionId = se.Id,
+
+                    // 🔽 yeni alanlar: oturum durumu + proctoring
+                    IsCancelled = se.IsCancelled,
+                    FinishedAt = se.FinishedAt,
+                    ViolationCount = se.ViolationCount
+                };
+
+            return query.ToArray();
         }
+
+        // -------------------- SESSION DETAY --------------------
 
         public async Task<SessionDetailDto> GetSessionDetailAsync(Guid sessionId)
         {
@@ -82,9 +100,13 @@ namespace DenemeTest.Application.Exams
                 CandidateFirstName = candidate.FirstName,
                 CandidateLastName = candidate.LastName,
                 CandidateEmail = candidate.Email,
+
                 StartTime = session.StartedAt,
-                EndTime = null,
-                Violations = 0
+                EndTime = session.FinishedAt,
+
+                Violations = session.ViolationCount,
+                IsCancelled = session.IsCancelled,
+                CancelReason = session.CancelReason
             };
 
             var answers = await _answerRepo.GetListAsync(a => a.ExamSessionId == sessionId);
@@ -113,7 +135,7 @@ namespace DenemeTest.Application.Exams
                     QuestionType = q.Type.ToString(),
                     SelectedOptions = selectedOptionTexts,
                     TextAnswer = ans.TextAnswer,
-                    // Answer entity'de alan olmadığı için null geçiyoruz
+                    // Answer entity'de alan olmadığı için şimdilik null geçiyoruz
                     CodeOutput = null
                 });
             }
@@ -137,6 +159,9 @@ namespace DenemeTest.Application.Exams
         public DateTime? EndTime { get; set; }
 
         public int Violations { get; set; }
+
+        public bool IsCancelled { get; set; }
+        public string? CancelReason { get; set; }
 
         public List<QuestionAnswerDetailDto> Answers { get; set; } = new();
     }

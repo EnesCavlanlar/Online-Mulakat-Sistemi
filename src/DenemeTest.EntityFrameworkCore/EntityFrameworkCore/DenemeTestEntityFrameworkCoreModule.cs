@@ -44,8 +44,8 @@ public class DenemeTestEntityFrameworkCoreModule : AbpModule
     {
         context.Services.AddAbpDbContext<DenemeTestDbContext>(options =>
         {
-                /* Remove "includeAllEntities: true" to create
-                 * default repositories only for aggregate roots */
+            /* Remove "includeAllEntities: true" to create
+             * default repositories only for aggregate roots */
             options.AddDefaultRepositories(includeAllEntities: true);
         });
 

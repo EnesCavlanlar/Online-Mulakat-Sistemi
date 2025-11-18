@@ -3,6 +3,7 @@
 @using DenemeTest.Exams.Dtos
 @inject DenemeTest.Application.Exams.IQuestionAppService QuestionApp
 @inject DenemeTest.Application.Exams.ITestAppService TestApp
+@inject DenemeTest.Exams.ICodeTestCaseAppService CodeTestCaseApp
 
 @* DTO enum için kısa ad *@
 @using QT = DenemeTest.Exams.Dtos.QuestionTypeDto
@@ -47,7 +48,7 @@ else
                     <td>@q.Points</td>
                     <td>@(q.Options?.Count ?? 0)</td>
                     <td>
-                        <button class="btn btn-sm btn-outline-secondary me-2" @onclick="() => Edit(q)">Düzenle</button>
+                        <button class="btn btn-sm btn-outline-secondary me-2" @onclick="() => EditAsync(q)">Düzenle</button>
                         <button class="btn btn-sm btn-outline-danger" @onclick="() => Delete(q.Id)">Sil</button>
                     </td>
                 </tr>
@@ -89,11 +90,13 @@ else
                             <label class="form-label">Puan</label>
                             <input type="number" class="form-control" @bind="_form.Points" min="1" />
                         </div>
+
                         <div class="col-12">
                             <label class="form-label">Soru Metni</label>
                             <textarea class="form-control" rows="3" @bind="_form.Text"></textarea>
                         </div>
 
+                        @* Çoktan seçmeli seçenek yönetimi *@
                         @if (_form.Type == QT.MultipleChoice)
                         {
                             <div class="col-12">
@@ -111,6 +114,81 @@ else
                                     </div>
                                 }
                                 <button class="btn btn-sm btn-outline-primary" type="button" @onclick="AddOption">Seçenek Ekle</button>
+                            </div>
+                        }
+
+                        @* Kodlama soruları için test-case yönetimi *@
+                        @if (_form.Type == QT.Coding)
+                        {
+                            <div class="col-12 mt-3">
+                                <label class="form-label d-block">Kodlama Test Case'leri</label>
+
+                                @if (_editId == null)
+                                {
+                                    <div class="alert alert-info">
+                                        Test-case ekleyebilmek için önce soruyu kaydedin, sonra tekrar düzenleyerek açın.
+                                    </div>
+                                }
+                                else
+                                {
+                                    @if (_loadingCodeCases)
+                                    {
+                                        <p>Test-case'ler yükleniyor...</p>
+                                    }
+                                    else
+                                    {
+                                        @if (_codeCases.Count == 0)
+                                        {
+                                            <p class="text-muted">Bu soru için henüz test-case tanımlanmamış.</p>
+                                        }
+
+                                        @for (int i = 0; i < _codeCases.Count; i++)
+                                        {
+                                            <div class="border rounded p-2 mb-2">
+                                                <div class="mb-2">
+                                                    <label class="form-label">Input</label>
+                                                    <textarea class="form-control"
+                                                              rows="2"
+                                                              @bind="_codeCases[i].Input"></textarea>
+                                                </div>
+                                                <div class="mb-2">
+                                                    <label class="form-label">Beklenen Çıktı</label>
+                                                    <textarea class="form-control"
+                                                              rows="2"
+                                                              @bind="_codeCases[i].ExpectedOutput"></textarea>
+                                                </div>
+                                                <div class="d-flex align-items-center gap-2">
+                                                    <div>
+                                                        <label class="form-label">Ağırlık</label>
+                                                        <input type="number"
+                                                               class="form-control"
+                                                               style="max-width: 120px"
+                                                               @bind="_codeCases[i].Weight"
+                                                               min="1" />
+                                                    </div>
+                                                    <button type="button"
+                                                            class="btn btn-outline-danger ms-auto"
+                                                            @onclick="(() => RemoveCodeCase(i))">
+                                                        Sil
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        }
+
+                                        <div class="d-flex gap-2">
+                                            <button type="button"
+                                                    class="btn btn-sm btn-outline-primary"
+                                                    @onclick="AddCodeCase">
+                                                Test Case Ekle
+                                            </button>
+                                            <button type="button"
+                                                    class="btn btn-sm btn-success"
+                                                    @onclick="SaveCodeCasesAsync">
+                                                Test Case'leri Kaydet
+                                            </button>
+                                        </div>
+                                    }
+                                }
                             </div>
                         }
                     </div>
@@ -133,6 +211,10 @@ else
     private bool _showModal = false;
     private Guid? _editId;
     private CreateUpdateQuestionDto _form = new();
+
+    // Coding test case state
+    private List<CodeTestCaseDto> _codeCases = new();
+    private bool _loadingCodeCases = false;
 
     protected override async Task OnInitializedAsync()
     {
@@ -177,10 +259,12 @@ else
             Options = new List<CreateUpdateQuestionOptionDto>()
         };
         if (_tests.Count > 0) _form.TestId = _tests[0].Id;
+
+        _codeCases = new List<CodeTestCaseDto>();
         _showModal = true;
     }
 
-    private void Edit(QuestionDto dto)
+    private async Task EditAsync(QuestionDto dto)
     {
         _editId = dto.Id;
         _form = new CreateUpdateQuestionDto
@@ -192,7 +276,22 @@ else
             Options = dto.Options?.Select(o => new CreateUpdateQuestionOptionDto { Text = o.Text, IsCorrect = o.IsCorrect }).ToList()
                       ?? new List<CreateUpdateQuestionOptionDto>()
         };
+
+        _codeCases = new List<CodeTestCaseDto>();
         _showModal = true;
+
+        if (_form.Type == QT.Coding)
+        {
+            await LoadCodeCasesAsync(dto.Id);
+            StateHasChanged();
+        }
+    }
+
+    private async Task LoadCodeCasesAsync(Guid questionId)
+    {
+        _loadingCodeCases = true;
+        _codeCases = await CodeTestCaseApp.GetListByQuestionAsync(questionId);
+        _loadingCodeCases = false;
     }
 
     private async Task Delete(Guid id)
@@ -215,12 +314,45 @@ else
         StateHasChanged();
     }
 
-    private void CloseModal() => _showModal = false;
+    private void CloseModal()
+    {
+        _showModal = false;
+        _codeCases = new List<CodeTestCaseDto>();
+    }
 
     private void AddOption() => _form.Options.Add(new CreateUpdateQuestionOptionDto { Text = "", IsCorrect = false });
+
     private void RemoveOption(int i)
     {
         if (i >= 0 && i < _form.Options.Count) _form.Options.RemoveAt(i);
+    }
+
+    private void AddCodeCase()
+    {
+        if (_editId == null) return;
+
+        _codeCases.Add(new CodeTestCaseDto
+        {
+            QuestionId = _editId.Value,
+            Input = string.Empty,
+            ExpectedOutput = string.Empty,
+            Weight = 1
+        });
+    }
+
+    private void RemoveCodeCase(int index)
+    {
+        if (index >= 0 && index < _codeCases.Count)
+        {
+            _codeCases.RemoveAt(index);
+        }
+    }
+
+    private async Task SaveCodeCasesAsync()
+    {
+        if (_editId == null) return;
+        await CodeTestCaseApp.ReplaceForQuestionAsync(_editId.Value, _codeCases);
+        await LoadCodeCasesAsync(_editId.Value);
     }
 
     // basit confirm (şimdilik true döndürüyoruz)

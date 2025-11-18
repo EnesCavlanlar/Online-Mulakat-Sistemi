@@ -15,5 +15,8 @@ namespace DenemeTest.Exams.Dtos
 
         // Şimdilik tek dil varsayalım; ileride C#, Java, Python vs. ekleyebiliriz
         public string Language { get; set; } = "csharp";
+
+        // Test-case için standart input (stdin / parametre girişi)
+        public string? Input { get; set; }
     }
 }

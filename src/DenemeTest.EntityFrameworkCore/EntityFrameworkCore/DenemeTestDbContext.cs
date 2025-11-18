@@ -30,6 +30,8 @@ public class DenemeTestDbContext :
     public DbSet<Test> Tests { get; set; }
     public DbSet<Question> Questions { get; set; }
     public DbSet<QuestionOption> QuestionOptions { get; set; }
+    public DbSet<CodeTestCase> CodeTestCases { get; set; }
+
     public DbSet<Candidate> Candidates { get; set; }
     public DbSet<ExamInvitation> ExamInvitations { get; set; }
     public DbSet<ExamSession> ExamSessions { get; set; }

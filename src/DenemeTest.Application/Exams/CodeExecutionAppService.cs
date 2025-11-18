@@ -24,8 +24,9 @@ namespace DenemeTest.Exams
                 };
             }
 
-            // Şimdilik tamamen yapay bir kontrol:
-            // Kod string'i içinde "error" kelimesi geçiyorsa derleme hatası varsayıyoruz.
+            // ----------------------------
+            // DUMMY ERROR DETECTION
+            // ----------------------------
             var hasDummyError = input.Code.Contains("error", StringComparison.OrdinalIgnoreCase);
 
             var result = new RunCodeResultDto
@@ -38,15 +39,27 @@ namespace DenemeTest.Exams
                 result.Success = false;
                 result.Output = string.Empty;
                 result.Error = "Derleme hatası: 'error' kelimesi bulundu (dummy kontrol).";
+                return result;
+            }
+
+            // ----------------------------
+            // INPUT DESTEKLİ DUMMY OUTPUT
+            // ----------------------------
+            if (!string.IsNullOrWhiteSpace(input.Input))
+            {
+                // Test-case input’unu simüle ederek döndürüyoruz
+                result.Success = true;
+                result.Output = $"INPUT: {input.Input}".Trim();
+                result.Error = string.Empty;
             }
             else
             {
+                // Input yoksa varsayılan dummy çıktı
                 result.Success = true;
-                result.Output = "Kod başarıyla çalıştırıldı (dummy). Buraya gerçek çıktı gelecek.";
+                result.Output = "Kod başarıyla çalıştırıldı (dummy).";
                 result.Error = string.Empty;
             }
 
-            // Şimdilik async yapıya uymak için Task.FromResult
             return await Task.FromResult(result);
         }
     }

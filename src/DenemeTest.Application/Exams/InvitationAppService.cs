@@ -64,6 +64,10 @@ public class InvitationAppService : ApplicationService, IInvitationAppService
 
     // -------------------- Commands --------------------
 
+    /// <summary>
+    /// Sadece daveti oluşturur, e-posta GÖNDERMEZ.
+    /// Mail göndermek için SendEmailAsync veya CreateAndSendAsync kullanılmalıdır.
+    /// </summary>
     public async Task<ExamInvitationDto> CreateAsync(CreateExamInvitationDto input)
     {
         if (input.ExpireAt <= DateTime.UtcNow)
@@ -73,7 +77,6 @@ public class InvitationAppService : ApplicationService, IInvitationAppService
         var candidate = await _candRepo.GetAsync(input.CandidateId);
         var test = await _testRepo.GetAsync(input.TestId);
 
-        // Güvenli, URL-safe token üret
         var token = await GenerateUniqueTokenAsync();
 
         var entity = new ExamInvitation(
@@ -86,32 +89,79 @@ public class InvitationAppService : ApplicationService, IInvitationAppService
 
         await _invRepo.InsertAsync(entity, autoSave: true);
 
-        // Base URL tercih sırası: App:ClientUrl -> App:SelfUrl -> App:BaseUrl
-        var baseUrl = _config["App:ClientUrl"] ?? _config["App:SelfUrl"] ?? _config["App:BaseUrl"] ?? "https://localhost:44336";
+        return MapToDto(entity);
+    }
 
-        // Notlarımızda belirlediğimiz rota:
-        var link = $"{baseUrl.TrimEnd('/')}/exam/start/{token}";
+    /// <summary>
+    /// Daveti oluşturur ve adayın e-posta adresine davet mailini gönderir.
+    /// </summary>
+    public async Task<ExamInvitationDto> CreateAndSendAsync(CreateExamInvitationDto input)
+    {
+        var dto = await CreateAsync(input);
+        await SendEmailAsync(dto.Id);
+
+        // SentAt gibi alanlar güncelleneceği için son halini tekrar yükleyip döndürüyoruz.
+        var updated = await _invRepo.GetAsync(dto.Id);
+        return MapToDto(updated);
+    }
+
+    /// <summary>
+    /// Mevcut bir davet için e-posta gönderir (veya yeniden gönderir).
+    /// </summary>
+    public async Task SendEmailAsync(Guid invitationId)
+    {
+        var invitation = await _invRepo.GetAsync(invitationId);
+        var candidate = await _candRepo.GetAsync(invitation.CandidateId);
+        var test = await _testRepo.GetAsync(invitation.TestId);
+
+        if (string.IsNullOrWhiteSpace(candidate.Email))
+        {
+            throw new BusinessException("Invitation:CandidateEmailMissing")
+                .WithData("CandidateId", candidate.Id);
+        }
+
+        if (invitation.ExpireAt <= DateTime.UtcNow)
+        {
+            throw new BusinessException("Invitation:AlreadyExpired")
+                .WithData("ExpireAt", invitation.ExpireAt);
+        }
+
+        // Base URL tercih sırası: App:ClientUrl -> App:SelfUrl -> App:BaseUrl
+        var baseUrl =
+            _config["App:ClientUrl"]
+            ?? _config["App:SelfUrl"]
+            ?? _config["App:BaseUrl"]
+            ?? "https://localhost:44336";
+
+        var link = $"{baseUrl.TrimEnd('/')}/exam/start/{invitation.Token}";
 
         var subject = $"Sınav Daveti – {test.Name}";
-        var bodyHtml = new StringBuilder()
-            .Append($"Merhaba {candidate.FirstName} {candidate.LastName},<br/><br/>")
-            .Append($"<b>{test.Name}</b> sınavına davet edildiniz.<br/>")
-            .Append($"Son geçerlilik: {input.ExpireAt:G}<br/><br/>")
-            .Append($"Tek kullanımlık giriş bağlantınız: <a href=\"{link}\">{link}</a><br/><br/>")
-            .Append("Not: Bu bağlantı süre dolduğunda geçersiz olacaktır.")
-            .ToString();
+
+        // Plain-text gövde
+        var bodyBuilder = new StringBuilder();
+        bodyBuilder.AppendLine($"Merhaba {candidate.FirstName} {candidate.LastName},");
+        bodyBuilder.AppendLine();
+        bodyBuilder.AppendLine($"\"{test.Name}\" sınavına davet edildiniz.");
+        bodyBuilder.AppendLine($"Son geçerlilik: {invitation.ExpireAt:G}");
+        bodyBuilder.AppendLine();
+        bodyBuilder.AppendLine("Tek kullanımlık giriş bağlantınız:");
+        bodyBuilder.AppendLine(link);
+        bodyBuilder.AppendLine();
+        bodyBuilder.AppendLine("Not: Bu bağlantı süre dolduğunda geçersiz olacaktır.");
+        bodyBuilder.AppendLine();
+        bodyBuilder.AppendLine("İyi çalışmalar dileriz.");
+
+        var bodyText = bodyBuilder.ToString();
 
         await _emailSender.SendAsync(
             to: candidate.Email,
             subject: subject,
-            body: bodyHtml,
-            isBodyHtml: true
+            body: bodyText,
+            isBodyHtml: false // plain-text
         );
 
-        entity.MarkSent();
-        await _invRepo.UpdateAsync(entity, autoSave: true);
-
-        return MapToDto(entity);
+        invitation.MarkSent();
+        await _invRepo.UpdateAsync(invitation, autoSave: true);
     }
 
     public async Task DeleteAsync(Guid id)

@@ -36,7 +36,10 @@ else
                 <th style="width:60px">#</th>
                 <th>Ad Soyad</th>
                 <th>E-posta</th>
-                <th style="width:100px">Puan</th>
+                <th style="width:90px">Puan</th>
+                <th style="width:140px">Durum</th>
+                <th style="width:150px">Bitiş Zamanı</th>
+                <th style="width:90px">İhlal</th>
                 <th style="width:150px">Kayıt</th>
                 <th style="width:120px">Detay</th>
             </tr>
@@ -47,11 +50,40 @@ else
             }
             @foreach (LeaderboardItemDto row in _items!)
             {
-                <tr>
+                var rowClass = GetRowCss(row);
+
+                <tr class="@rowClass">
                     <td>@(++idx)</td>
                     <td>@row.FirstName @row.LastName</td>
                     <td>@row.Email</td>
                     <td><strong>@row.Score</strong></td>
+
+                    <td>
+                        @RenderStatus(row)
+                    </td>
+
+                    <td>
+                        @if (row.FinishedAt.HasValue)
+                        {
+                            @row.FinishedAt.Value.ToLocalTime().ToString("g")
+                        }
+                        else
+                        {
+                            <span class="text-muted">–</span>
+                        }
+                    </td>
+
+                    <td>
+                        @if (row.ViolationCount > 0)
+                        {
+                            <span class="badge bg-warning text-dark">@row.ViolationCount</span>
+                        }
+                        else
+                        {
+                            <span class="text-muted">0</span>
+                        }
+                    </td>
+
                     <td>
                         <a class="btn btn-sm btn-outline-secondary"
                            href="@($"/api/recordings/download?sessionId={row.ExamSessionId}")"
@@ -88,4 +120,37 @@ else
     {
         Nav.NavigateTo($"/admin/session/{id}");
     }
+
+    // Satırın CSS sınıfını durumuna göre belirle
+    private string GetRowCss(LeaderboardItemDto row)
+    {
+        if (row.IsCancelled)
+        {
+            return "table-danger";
+        }
+
+        if (row.FinishedAt.HasValue)
+        {
+            return "table-success";
+        }
+
+        return string.Empty;
+    }
+
+    // Durum text'i
+    private RenderFragment RenderStatus(LeaderboardItemDto row) => builder =>
+    {
+        var status = row.IsCancelled
+            ? "İptal"
+            : (row.FinishedAt.HasValue ? "Tamamlandı" : "Devam Ediyor");
+
+        var css = row.IsCancelled
+            ? "badge bg-danger"
+            : (row.FinishedAt.HasValue ? "badge bg-success" : "badge bg-secondary");
+
+        builder.OpenElement(0, "span");
+        builder.AddAttribute(1, "class", css);
+        builder.AddContent(2, status);
+        builder.CloseElement();
+    };
 }

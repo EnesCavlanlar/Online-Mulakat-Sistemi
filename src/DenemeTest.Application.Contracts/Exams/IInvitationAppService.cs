@@ -14,8 +14,14 @@ public interface IInvitationAppService : IApplicationService
     // Belirli bir daveti getirme
     Task<ExamInvitationDto> GetAsync(Guid id);
 
-    // Yeni davet oluşturma ve e-posta gönderme
+    // Sadece daveti oluşturur (e-posta göndermez)
     Task<ExamInvitationDto> CreateAsync(CreateExamInvitationDto input);
+
+    // Daveti oluşturur ve e-posta gönderir
+    Task<ExamInvitationDto> CreateAndSendAsync(CreateExamInvitationDto input);
+
+    // Mevcut bir davet için e-posta gönderme / yeniden gönderme
+    Task SendEmailAsync(Guid invitationId);
 
     // Daveti silme
     Task DeleteAsync(Guid id);

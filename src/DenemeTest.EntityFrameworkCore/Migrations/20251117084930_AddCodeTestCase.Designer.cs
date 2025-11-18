@@ -3,6 +3,7 @@ using System;
 using DenemeTest.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using Volo.Abp.EntityFrameworkCore;
@@ -12,9 +13,11 @@ using Volo.Abp.EntityFrameworkCore;
 namespace DenemeTest.Migrations
 {
     [DbContext(typeof(DenemeTestDbContext))]
-    partial class DenemeTestDbContextModelSnapshot : ModelSnapshot
+    [Migration("20251117084930_AddCodeTestCase")]
+    partial class AddCodeTestCase
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -315,9 +318,6 @@ namespace DenemeTest.Migrations
 
                     b.Property<Guid>("TestId")
                         .HasColumnType("uuid");
-
-                    b.Property<int>("ViolationCount")
-                        .HasColumnType("integer");
 
                     b.HasKey("Id");
 

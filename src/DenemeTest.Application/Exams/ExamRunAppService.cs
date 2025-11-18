@@ -19,7 +19,9 @@ namespace DenemeTest.Application.Exams
         private readonly IRepository<Answer, Guid> _answerRepo;
         private readonly IRepository<Score, Guid> _scoreRepo;
         private readonly IRepository<ExamInvitation, Guid> _invRepo;
+        private readonly IRepository<CodeTestCase, Guid> _codeTestRepo;
         private readonly IClassicScoringProvider _classic;
+        private readonly ICodeExecutionAppService _codeExec;
 
         public ExamRunAppService(
             IRepository<ExamSession, Guid> sessionRepo,
@@ -29,7 +31,9 @@ namespace DenemeTest.Application.Exams
             IRepository<Answer, Guid> answerRepo,
             IRepository<Score, Guid> scoreRepo,
             IRepository<ExamInvitation, Guid> invRepo,
-            IClassicScoringProvider classic)
+            IRepository<CodeTestCase, Guid> codeTestRepo,
+            IClassicScoringProvider classic,
+            ICodeExecutionAppService codeExec)
         {
             _sessionRepo = sessionRepo;
             _testRepo = testRepo;
@@ -38,7 +42,9 @@ namespace DenemeTest.Application.Exams
             _answerRepo = answerRepo;
             _scoreRepo = scoreRepo;
             _invRepo = invRepo;
+            _codeTestRepo = codeTestRepo;
             _classic = classic;
+            _codeExec = codeExec;
         }
 
         // -------------------- TOKEN İLE BAŞLAT --------------------
@@ -109,7 +115,11 @@ namespace DenemeTest.Application.Exams
                     Points = q.Points,
                     Options = options
                         .Where(o => o.QuestionId == q.Id)
-                        .Select(o => new QuestionOptionRunDto { Id = o.Id, Text = o.Text })
+                        .Select(o => new QuestionOptionRunDto
+                        {
+                            Id = o.Id,
+                            Text = o.Text
+                        })
                         .ToList()
                 }).ToList()
             };
@@ -167,13 +177,22 @@ namespace DenemeTest.Application.Exams
 
                 if (q.Type == QuestionType.MultipleChoice)
                 {
-                    var correct = options.Where(o => o.QuestionId == q.Id && o.IsCorrect)
-                                         .Select(o => o.Id).OrderBy(x => x).ToArray();
+                    // Tüm doğru seçenekleri topla
+                    var correct = options
+                        .Where(o => o.QuestionId == q.Id && o.IsCorrect)
+                        .Select(o => o.Id)
+                        .OrderBy(x => x)
+                        .ToArray();
+
+                    // Adayın seçtikleri
                     var chosen = (ans?.SelectedOptionIds ?? Array.Empty<Guid>())
-                                  .OrderBy(x => x).ToArray();
+                        .OrderBy(x => x)
+                        .ToArray();
 
                     if (correct.SequenceEqual(chosen))
+                    {
                         earned += q.Points;
+                    }
                 }
                 else if (q.Type == QuestionType.Classic)
                 {
@@ -183,7 +202,57 @@ namespace DenemeTest.Application.Exams
                 }
                 else if (q.Type == QuestionType.Coding)
                 {
-                    // TODO: Kod soruları için test-case tabanlı puanlama
+                    // Kod soruları için test-case tabanlı puanlama
+                    var candCode = ans?.TextAnswer ?? string.Empty;
+                    if (string.IsNullOrWhiteSpace(candCode))
+                    {
+                        // Kod yoksa puan da yok
+                        continue;
+                    }
+
+                    var testCases = await _codeTestRepo.GetListAsync(tc => tc.QuestionId == q.Id);
+                    if (testCases == null || testCases.Count == 0)
+                    {
+                        // Test-case tanımlı değilse şimdilik puan vermeyelim
+                        continue;
+                    }
+
+                    int totalWeight = testCases.Sum(tc => Math.Max(1, tc.Weight));
+                    int passedWeight = 0;
+
+                    foreach (var tc in testCases)
+                    {
+                        var runReq = new RunCodeRequestDto
+                        {
+                            SessionId = sess.Id,
+                            QuestionId = q.Id,
+                            Code = candCode,
+                            Language = "csharp",
+                            Input = tc.Input // 🔴 test-case input’u artık servise gidiyor
+                        };
+
+                        var runRes = await _codeExec.RunAsync(runReq);
+
+                        if (!runRes.Success)
+                        {
+                            // Derleme/çalışma hatasında bu test-case başarısız sayılır
+                            continue;
+                        }
+
+                        var actual = (runRes.Output ?? string.Empty).Trim();
+                        var expected = (tc.ExpectedOutput ?? string.Empty).Trim();
+
+                        if (actual == expected)
+                        {
+                            passedWeight += Math.Max(1, tc.Weight);
+                        }
+                    }
+
+                    if (totalWeight > 0 && passedWeight > 0)
+                    {
+                        var ratio = passedWeight / (double)totalWeight;
+                        earned += (int)Math.Round(q.Points * ratio);
+                    }
                 }
             }
 
@@ -196,19 +265,17 @@ namespace DenemeTest.Application.Exams
                 await _scoreRepo.DeleteAsync(existing, autoSave: true);
             }
 
-            // Yeni (çalışan)
             var sc = new Score(
                 GuidGenerator.Create(),
                 sessionId,
                 finalScore,
-                "Auto-computed (MCQ + classic; coding TODO)"
+                "Auto-computed (MCQ + classic + coding)"
             );
-            await _scoreRepo.InsertAsync(sc, autoSave: true);
+
             await _scoreRepo.InsertAsync(sc, autoSave: true);
 
             return finalScore;
         }
-
 
         // -------- helpers --------
         private static QuestionTypeDto MapToDto(QuestionType t) => t switch

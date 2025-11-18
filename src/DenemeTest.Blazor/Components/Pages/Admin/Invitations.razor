@@ -2,7 +2,7 @@
 @using DenemeTest.Exams.Dtos
 @inject DenemeTest.Application.Exams.ITestAppService TestApp
 @inject DenemeTest.Application.Exams.ICandidateAppService CandidateApp
-@inject DenemeTest.Exams.IInvitationAppService InvitationApp   
+@inject DenemeTest.Exams.IInvitationAppService InvitationApp
 
 <h3>Aday Davet Et</h3>
 
@@ -12,6 +12,24 @@
 }
 else
 {
+    @if (!string.IsNullOrWhiteSpace(_errorMessage))
+    {
+        <div class="alert alert-danger">@_errorMessage</div>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(_successMessage))
+    {
+        <div class="alert alert-success">
+            @_successMessage
+            @if (!string.IsNullOrWhiteSpace(_resultToken))
+            {
+                <div class="mt-2">
+                    Token: <code>@_resultToken</code>
+                </div>
+            }
+        </div>
+    }
+
     <div class="card">
         <div class="card-body">
             <div class="row g-3">
@@ -45,28 +63,30 @@ else
                 </div>
 
                 <div class="col-12">
-                    <button class="btn btn-primary" @onclick="Send">Davet Gönder</button>
+                    <button class="btn btn-primary"
+                            @onclick="Send"
+                            disabled="@_sending">
+                        @(_sending ? "Gönderiliyor..." : "Davet Gönder")
+                    </button>
                 </div>
             </div>
         </div>
     </div>
-
-    @if (!string.IsNullOrWhiteSpace(_resultToken))
-    {
-        <div class="alert alert-success mt-3">
-            Davet oluşturuldu. Token: <code>@_resultToken</code>
-        </div>
-    }
 }
 
 @code {
     private bool _loading = true;
+    private bool _sending = false;
+
     private List<TestDto> _tests = new();
     private List<CandidateDto> _candidates = new();
 
-    // ✅ Doğru DTO
+    // Davet oluşturma DTO'su
     private CreateExamInvitationDto _form = new();
+
     private string? _resultToken;
+    private string? _errorMessage;
+    private string? _successMessage;
 
     // Yerel tarih-saat inputu
     private DateTime? _expireLocal;
@@ -79,8 +99,11 @@ else
         var c = await CandidateApp.GetListAsync(new Volo.Abp.Application.Dtos.PagedAndSortedResultRequestDto());
         _candidates = c.Items.ToList();
 
-        if (_tests.Count > 0) _form.TestId = _tests[0].Id;
-        if (_candidates.Count > 0) _form.CandidateId = _candidates[0].Id;
+        if (_tests.Count > 0)
+            _form.TestId = _tests[0].Id;
+
+        if (_candidates.Count > 0)
+            _form.CandidateId = _candidates[0].Id;
 
         // Varsayılan: +3 gün (local)
         _expireLocal = DateTime.Now.AddDays(3);
@@ -90,12 +113,37 @@ else
 
     private async Task Send()
     {
-        // null ise +3 gün; UTC'ye çevir
-        _form.ExpireAt = (_expireLocal ?? DateTime.Now.AddDays(3)).ToUniversalTime();
+        _errorMessage = null;
+        _successMessage = null;
+        _resultToken = null;
 
-        // ✅ Doğru service metodu
-        var res = await InvitationApp.CreateAsync(_form);
-        _resultToken = res.Token;
-        StateHasChanged();
+        if (_form.TestId == Guid.Empty || _form.CandidateId == Guid.Empty)
+        {
+            _errorMessage = "Lütfen hem test hem aday seçiniz.";
+            return;
+        }
+
+        _sending = true;
+        try
+        {
+            // null ise +3 gün; UTC'ye çevir
+            _form.ExpireAt = (_expireLocal ?? DateTime.Now.AddDays(3)).ToUniversalTime();
+
+            // Mail ile birlikte davet oluştur
+            var res = await InvitationApp.CreateAndSendAsync(_form);
+
+            _resultToken = res.Token;
+            _successMessage = "Davet oluşturuldu ve e-posta gönderildi.";
+        }
+        catch (Exception ex)
+        {
+            // Production'da burada daha düzgün bir hata gösterimi yapabiliriz
+            _errorMessage = ex.Message;
+        }
+        finally
+        {
+            _sending = false;
+            StateHasChanged();
+        }
     }
 }
