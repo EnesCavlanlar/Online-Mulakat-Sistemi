@@ -1,4 +1,4 @@
-using Microsoft.Extensions.DependencyInjection;
+﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using DenemeTest.Localization;
 using DenemeTest.MultiTenancy;
@@ -34,7 +34,7 @@ namespace DenemeTest;
     typeof(AbpOpenIddictDomainModule),
     typeof(AbpTenantManagementDomainModule),
     typeof(BlobStoringDatabaseDomainModule)
-    )]
+)]
 public class DenemeTestDomainModule : AbpModule
 {
     public override void ConfigureServices(ServiceConfigurationContext context)
@@ -44,9 +44,9 @@ public class DenemeTestDomainModule : AbpModule
             options.IsEnabled = MultiTenancyConsts.IsEnabled;
         });
 
+        // ❌ Environment kontrolü YOK (Domain katmanında desteklenmez)
+        // ❌ NullEmailSender override YOK (çünkü Development’ta gerçek SMTP kullanıyoruz)
 
-#if DEBUG
-        context.Services.Replace(ServiceDescriptor.Singleton<IEmailSender, NullEmailSender>());
-#endif
+        // ✔ Mail ayarları tamamen appsettings üzerinden çalışacak.
     }
 }

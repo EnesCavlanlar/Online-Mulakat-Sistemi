@@ -1,25 +1,28 @@
 ﻿using System.Threading.Tasks;
-using DenemeTest.Exams;
 using Microsoft.AspNetCore.Mvc;
+using DenemeTest.Application.Exams; // IExamSessionAppService buradan geliyor
 
-namespace DenemeTest.Controllers;
-
-[Route("exam/start")]
-public class ExamStartController : Controller
+namespace DenemeTest.Controllers
 {
-    private readonly IExamRunAppService _examRunApp;
-
-    public ExamStartController(IExamRunAppService examRunApp)
+    [Route("api/exam/start")]
+    public class ExamStartController : Controller
     {
-        _examRunApp = examRunApp;
-    }
+        private readonly IExamSessionAppService _sessionApp;
 
-    // GET /exam/start/{token}
-    [HttpGet("{token}")]
-    public async Task<IActionResult> StartByToken(string token)
-    {
-        var res = await _examRunApp.StartWithTokenAsync(token);
-        // Runner sayfasına gönder
-        return Redirect($"/exam/runner/{res.SessionId}");
+        public ExamStartController(IExamSessionAppService sessionApp)
+        {
+            _sessionApp = sessionApp;
+        }
+
+        // GET /api/exam/start/{token}
+        [HttpGet("{token}")]
+        public async Task<IActionResult> StartByToken(string token)
+        {
+            // mevcut servisi kullanıyoruz
+            var result = await _sessionApp.StartByTokenAsync(token);
+
+            // result.Id = ExamSession Id
+            return Redirect($"/exam/runner/{result.Id}");
+        }
     }
 }

@@ -1,4 +1,7 @@
 ﻿@page "/admin/invitations"
+@using System
+@using System.Collections.Generic
+@using System.Linq
 @using DenemeTest.Exams.Dtos
 @inject DenemeTest.Application.Exams.ITestAppService TestApp
 @inject DenemeTest.Application.Exams.ICandidateAppService CandidateApp
@@ -21,7 +24,7 @@ else
     {
         <div class="alert alert-success">
             @_successMessage
-            @if (!string.IsNullOrWhiteSpace(_resultToken))
+            @if (!string.IsNullOrWhiteSpace(_resultToken) && _activeTab == "single")
             {
                 <div class="mt-2">
                     Token: <code>@_resultToken</code>
@@ -30,66 +33,164 @@ else
         </div>
     }
 
-    <div class="card">
-        <div class="card-body">
-            <div class="row g-3">
-                <div class="col-md-6">
-                    <label class="form-label">Test</label>
-                    <select class="form-select" @bind="_form.TestId">
-                        @foreach (var t in _tests)
-                        {
-                            <option value="@t.Id">@t.Name</option>
-                        }
-                    </select>
-                </div>
+    <ul class="nav nav-tabs mb-3">
+        <li class="nav-item">
+            <button type="button"
+                    class="nav-link @(_activeTab == "single" ? "active" : "")"
+                    @onclick='() => SwitchTab("single")'>
+                Tekli Davet
+            </button>
+        </li>
+        <li class="nav-item">
+            <button type="button"
+                    class="nav-link @(_activeTab == "bulk" ? "active" : "")"
+                    @onclick='() => SwitchTab("bulk")'>
+                Toplu Davet
+            </button>
+        </li>
+    </ul>
 
-                <div class="col-md-6">
-                    <label class="form-label">Aday</label>
-                    <select class="form-select" @bind="_form.CandidateId">
-                        @foreach (var c in _candidates)
-                        {
-                            <option value="@c.Id">@($"{c.FirstName} {c.LastName} - {c.Email}")</option>
-                        }
-                    </select>
-                </div>
+    @if (_activeTab == "single")
+    {
+        <!-- TEKLİ DAVET -->
+        <div class="card">
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label">Test</label>
+                        <select class="form-select" @bind="_form.TestId">
+                            @foreach (var t in _tests)
+                            {
+                                <option value="@t.Id">@t.Name</option>
+                            }
+                        </select>
+                    </div>
 
-                <div class="col-md-6">
-                    <label class="form-label">Son Geçerlilik</label>
-                    <input type="datetime-local"
-                           class="form-control"
-                           @bind="_expireLocal"
-                           @bind:format="yyyy-MM-ddTHH:mm" />
-                    <small class="text-muted">Mailde tek kullanımlık bağlantı yer alacak.</small>
-                </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Aday</label>
+                        <select class="form-select" @bind="_form.CandidateId">
+                            @foreach (var c in _candidates)
+                            {
+                                <option value="@c.Id">@($"{c.FirstName} {c.LastName} - {c.Email}")</option>
+                            }
+                        </select>
+                    </div>
 
-                <div class="col-12">
-                    <button class="btn btn-primary"
-                            @onclick="Send"
-                            disabled="@_sending">
-                        @(_sending ? "Gönderiliyor..." : "Davet Gönder")
-                    </button>
+                    <div class="col-md-6">
+                        <label class="form-label">Son Geçerlilik</label>
+                        <input type="datetime-local"
+                               class="form-control"
+                               @bind="_expireLocal"
+                               @bind:format="yyyy-MM-ddTHH:mm" />
+                        <small class="text-muted">Mailde tek kullanımlık bağlantı yer alacak.</small>
+                    </div>
+
+                    <div class="col-12">
+                        <button class="btn btn-primary"
+                                @onclick="Send"
+                                disabled="@_sending">
+                            @(_sending ? "Gönderiliyor..." : "Davet Gönder")
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
-    </div>
+    }
+    else if (_activeTab == "bulk")
+    {
+        <!-- TOPLU DAVET -->
+        <div class="card">
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label">Test</label>
+                        <select class="form-select" @bind="_bulkForm.TestId">
+                            @foreach (var t in _tests)
+                            {
+                                <option value="@t.Id">@t.Name</option>
+                            }
+                        </select>
+                    </div>
+
+                    <div class="col-md-6">
+                        <label class="form-label">Son Geçerlilik</label>
+                        <input type="datetime-local"
+                               class="form-control"
+                               @bind="_bulkExpireLocal"
+                               @bind:format="yyyy-MM-ddTHH:mm" />
+                        <small class="text-muted">
+                            Seçilen tüm adaylar için aynı son geçerlilik tarihi kullanılacaktır.
+                        </small>
+                    </div>
+
+                    <div class="col-12">
+                        <label class="form-label">Adaylar (çoklu seçim)</label>
+                        <div class="border rounded p-2" style="max-height: 300px; overflow-y: auto;">
+                            @if (_candidates.Count == 0)
+                            {
+                                <p class="text-muted">Sistemde kayıtlı aday bulunamadı.</p>
+                            }
+                            else
+                            {
+                                @foreach (var c in _candidates)
+                                {
+                                    <div class="form-check">
+                                        <input class="form-check-input"
+                                               type="checkbox"
+                                               checked="@_bulkSelectedCandidateIds.Contains(c.Id)"
+                                               @onchange="e => OnBulkCandidateToggle(c.Id, e.Value)">
+                                        <label class="form-check-label">
+                                            @($"{c.FirstName} {c.LastName} - {c.Email}")
+                                        </label>
+                                    </div>
+                                }
+                            }
+                        </div>
+                        <small class="text-muted">
+                            Seçilen her aday için ayrı bir token üretilecek ve maille tek kullanımlık
+                            <code>/exam/start/{token}</code> bağlantısı gönderilecektir.
+                        </small>
+                    </div>
+
+                    <div class="col-12">
+                        <button class="btn btn-primary"
+                                @onclick="SendBulk"
+                                disabled="@_bulkSending">
+                            @(_bulkSending ? "Toplu davet gönderiliyor..." : "Toplu Davet Gönder")
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
 }
 
 @code {
     private bool _loading = true;
     private bool _sending = false;
+    private bool _bulkSending = false;
+
+    private string _activeTab = "single";
 
     private List<TestDto> _tests = new();
     private List<CandidateDto> _candidates = new();
 
-    // Davet oluşturma DTO'su
+    // Tekli davet DTO'su
     private CreateExamInvitationDto _form = new();
+
+    // Toplu davet DTO'su
+    private BulkExamInvitationDto _bulkForm = new();
 
     private string? _resultToken;
     private string? _errorMessage;
     private string? _successMessage;
 
-    // Yerel tarih-saat inputu
+    // Tekli ve toplu için yerel tarih-saat inputları
     private DateTime? _expireLocal;
+    private DateTime? _bulkExpireLocal;
+
+    // Toplu seçim için aday ID'leri
+    private HashSet<Guid> _bulkSelectedCandidateIds = new();
 
     protected override async Task OnInitializedAsync()
     {
@@ -100,15 +201,29 @@ else
         _candidates = c.Items.ToList();
 
         if (_tests.Count > 0)
+        {
             _form.TestId = _tests[0].Id;
+            _bulkForm.TestId = _tests[0].Id;
+        }
 
         if (_candidates.Count > 0)
+        {
             _form.CandidateId = _candidates[0].Id;
+        }
 
         // Varsayılan: +3 gün (local)
         _expireLocal = DateTime.Now.AddDays(3);
+        _bulkExpireLocal = DateTime.Now.AddDays(3);
 
         _loading = false;
+    }
+
+    private void SwitchTab(string tab)
+    {
+        _activeTab = tab;
+        _errorMessage = null;
+        _successMessage = null;
+        _resultToken = null;
     }
 
     private async Task Send()
@@ -126,10 +241,8 @@ else
         _sending = true;
         try
         {
-            // null ise +3 gün; UTC'ye çevir
             _form.ExpireAt = (_expireLocal ?? DateTime.Now.AddDays(3)).ToUniversalTime();
 
-            // Mail ile birlikte davet oluştur
             var res = await InvitationApp.CreateAndSendAsync(_form);
 
             _resultToken = res.Token;
@@ -137,12 +250,73 @@ else
         }
         catch (Exception ex)
         {
-            // Production'da burada daha düzgün bir hata gösterimi yapabiliriz
             _errorMessage = ex.Message;
         }
         finally
         {
             _sending = false;
+            StateHasChanged();
+        }
+    }
+
+    private void OnBulkCandidateToggle(Guid id, object? value)
+    {
+        if (value is bool isChecked)
+        {
+            if (isChecked)
+            {
+                _bulkSelectedCandidateIds.Add(id);
+            }
+            else
+            {
+                _bulkSelectedCandidateIds.Remove(id);
+            }
+        }
+    }
+
+    private async Task SendBulk()
+    {
+        _errorMessage = null;
+        _successMessage = null;
+        _resultToken = null;
+
+        if (_bulkForm.TestId == Guid.Empty)
+        {
+            _errorMessage = "Lütfen test seçiniz.";
+            return;
+        }
+
+        if (_bulkSelectedCandidateIds.Count == 0)
+        {
+            _errorMessage = "En az bir aday seçmelisiniz.";
+            return;
+        }
+
+        _bulkSending = true;
+        try
+        {
+            _bulkForm.ExpireAt = (_bulkExpireLocal ?? DateTime.Now.AddDays(3)).ToUniversalTime();
+            _bulkForm.CandidateIds = _bulkSelectedCandidateIds.ToList();
+
+            var res = await InvitationApp.CreateBulkAsync(_bulkForm);
+
+            if (res.FailureCount == 0)
+            {
+                _successMessage = $"Toplam {res.SuccessCount} aday için davet oluşturuldu ve e-posta gönderildi.";
+            }
+            else
+            {
+                _successMessage =
+                    $"Başarılı: {res.SuccessCount}, Hatalı: {res.FailureCount}. Detay için logları kontrol edebilirsiniz.";
+            }
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = ex.Message;
+        }
+        finally
+        {
+            _bulkSending = false;
             StateHasChanged();
         }
     }

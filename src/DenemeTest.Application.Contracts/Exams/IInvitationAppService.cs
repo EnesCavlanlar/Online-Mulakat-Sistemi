@@ -25,4 +25,8 @@ public interface IInvitationAppService : IApplicationService
 
     // Daveti silme
     Task DeleteAsync(Guid id);
+
+    // 🔥 TOPLU DAVET OLUŞTURMA + MAIL GÖNDERME
+    // Ör: 1 test + 100 candidateId gönder → her biri için tekil davet + mail
+    Task<BulkInvitationResultDto> CreateBulkAsync(BulkExamInvitationDto input);
 }

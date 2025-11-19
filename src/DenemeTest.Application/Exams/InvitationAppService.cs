@@ -3,6 +3,7 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
+using System.Collections.Generic; // ⬅ eklendi
 using DenemeTest.Exams;
 using DenemeTest.Exams.Dtos;
 using Microsoft.Extensions.Configuration;
@@ -64,10 +65,6 @@ public class InvitationAppService : ApplicationService, IInvitationAppService
 
     // -------------------- Commands --------------------
 
-    /// <summary>
-    /// Sadece daveti oluşturur, e-posta GÖNDERMEZ.
-    /// Mail göndermek için SendEmailAsync veya CreateAndSendAsync kullanılmalıdır.
-    /// </summary>
     public async Task<ExamInvitationDto> CreateAsync(CreateExamInvitationDto input)
     {
         if (input.ExpireAt <= DateTime.UtcNow)
@@ -92,22 +89,15 @@ public class InvitationAppService : ApplicationService, IInvitationAppService
         return MapToDto(entity);
     }
 
-    /// <summary>
-    /// Daveti oluşturur ve adayın e-posta adresine davet mailini gönderir.
-    /// </summary>
     public async Task<ExamInvitationDto> CreateAndSendAsync(CreateExamInvitationDto input)
     {
         var dto = await CreateAsync(input);
         await SendEmailAsync(dto.Id);
 
-        // SentAt gibi alanlar güncelleneceği için son halini tekrar yükleyip döndürüyoruz.
         var updated = await _invRepo.GetAsync(dto.Id);
         return MapToDto(updated);
     }
 
-    /// <summary>
-    /// Mevcut bir davet için e-posta gönderir (veya yeniden gönderir).
-    /// </summary>
     public async Task SendEmailAsync(Guid invitationId)
     {
         var invitation = await _invRepo.GetAsync(invitationId);
@@ -126,18 +116,16 @@ public class InvitationAppService : ApplicationService, IInvitationAppService
                 .WithData("ExpireAt", invitation.ExpireAt);
         }
 
-        // Base URL tercih sırası: App:ClientUrl -> App:SelfUrl -> App:BaseUrl
         var baseUrl =
             _config["App:ClientUrl"]
             ?? _config["App:SelfUrl"]
             ?? _config["App:BaseUrl"]
             ?? "https://localhost:44336";
 
-        var link = $"{baseUrl.TrimEnd('/')}/exam/start/{invitation.Token}";
+        var link = $"{baseUrl.TrimEnd('/')}/api/exam/start/{invitation.Token}";
 
         var subject = $"Sınav Daveti – {test.Name}";
 
-        // Plain-text gövde
         var bodyBuilder = new StringBuilder();
         bodyBuilder.AppendLine($"Merhaba {candidate.FirstName} {candidate.LastName},");
         bodyBuilder.AppendLine();
@@ -157,7 +145,7 @@ public class InvitationAppService : ApplicationService, IInvitationAppService
             to: candidate.Email,
             subject: subject,
             body: bodyText,
-            isBodyHtml: false // plain-text
+            isBodyHtml: false
         );
 
         invitation.MarkSent();
@@ -167,6 +155,55 @@ public class InvitationAppService : ApplicationService, IInvitationAppService
     public async Task DeleteAsync(Guid id)
     {
         await _invRepo.DeleteAsync(id);
+    }
+
+    // -------------------- 🔥 BULK INVITATION (YENİ ÖZELLİK) --------------------
+
+    public async Task<BulkInvitationResultDto> CreateBulkAsync(BulkExamInvitationDto input)
+    {
+        var result = new BulkInvitationResultDto();
+
+        // Test var mı?
+        var test = await _testRepo.GetAsync(input.TestId);
+
+        foreach (var candidateId in input.CandidateIds)
+        {
+            var item = new BulkInvitationItemResultDto
+            {
+                CandidateId = candidateId
+            };
+
+            try
+            {
+                // 1) Normal CreateAsync kullan
+                var createDto = new CreateExamInvitationDto
+                {
+                    TestId = input.TestId,
+                    CandidateId = candidateId,
+                    ExpireAt = input.ExpireAt
+                };
+
+                var inv = await CreateAsync(createDto);
+                item.InvitationId = inv.Id;
+
+                // 2) Mail gönder
+                await SendEmailAsync(inv.Id);
+
+                item.Success = true;
+                result.SuccessCount++;
+            }
+            catch (Exception ex)
+            {
+                // Aday özelinde hata
+                item.Success = false;
+                item.Error = ex.Message;
+                result.FailureCount++;
+            }
+
+            result.Items.Add(item);
+        }
+
+        return result;
     }
 
     // -------------------- Helpers --------------------
