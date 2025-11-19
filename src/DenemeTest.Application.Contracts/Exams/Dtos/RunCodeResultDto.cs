@@ -1,19 +1,27 @@
-﻿using System;
+﻿using Volo.Abp.Application.Dtos;
 
-namespace DenemeTest.Exams.Dtos
+namespace DenemeTest.Exams.Dtos;
+
+public class RunCodeResultDto : EntityDto
 {
-    public class RunCodeResultDto
-    {
-        // Çalıştırma başarılı mı (derleme + testler)
-        public bool Success { get; set; }
+    /// <summary>
+    /// Çalıştırma başarılı mı? (Derleme/runtime hatası yoksa true)
+    /// </summary>
+    public bool Success { get; set; }
 
-        // Standart çıktı (console output gibi düşünebilirsin)
-        public string Output { get; set; } = string.Empty;
+    /// <summary>
+    /// Programın STDOUT çıktısı (Console.WriteLine vs.)
+    /// </summary>
+    public string Output { get; set; } = string.Empty;
 
-        // Hata mesajı (derleme hatası veya runtime hatası)
-        public string Error { get; set; } = string.Empty;
+    /// <summary>
+    /// Hata mesajı (derleme veya runtime).
+    /// </summary>
+    public string? Error { get; set; }
 
-        // İleride loglarda kullanmak için
-        public DateTime ExecutedAt { get; set; }
-    }
+    /// <summary>
+    /// Process exit code (0 = başarılı).
+    /// Şimdilik stub için 0 veya 1 gönderiyoruz.
+    /// </summary>
+    public int ExitCode { get; set; }
 }

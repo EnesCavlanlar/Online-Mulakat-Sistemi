@@ -5,6 +5,8 @@
 @inject NavigationManager Nav
 @inject IJSRuntime JS
 
+@implements IAsyncDisposable
+
 <h3>Sınav Girişi</h3>
 
 @if (_error != null)
@@ -22,65 +24,106 @@ else
         <div class="card-body">
             <div class="d-flex align-items-start gap-3 flex-wrap">
                 <div>
-                    <video id="previewVideo" width="320" height="240" class="border rounded"></video>
+                    <video id="previewVideo"
+                           width="320"
+                           height="240"
+                           class="border rounded"
+                           autoplay
+                           playsinline
+                           muted></video>
                 </div>
+
                 <div class="d-flex flex-column gap-2">
-                    <button class="btn btn-outline-primary" @onclick="RequestPermission" disabled="@_granted">Kamera/Mikrofon İzni Ver</button>
+                    <button class="btn btn-outline-primary"
+                            @onclick="RequestPermission"
+                            disabled="@(_requesting || _granted)">
+                        @(_granted ? "Kamera/Mikrofon Açık" : "Kamera/Mikrofon İzni Ver")
+                    </button>
+
                     <div>
                         Durum:
-                        @if (_granted)
-                        {
-                            <span class="badge bg-success">İzin verildi</span>
-                        }
-                        else
-                        {
-                            <span class="badge bg-secondary">Bekleniyor</span>
-                        }
+                        <span id="statusText"
+                              class="badge @( _granted ? "bg-success" : "bg-secondary")">
+                            @_statusText
+                        </span>
                     </div>
-                    <small class="text-muted">Tarayıcın izin diyalogu göstermediyse sayfayı yenilemeyi dene.</small>
+
+                    <small class="text-muted">
+                        Tarayıcın izin diyalogu göstermediyse sayfayı yenilemeyi dene.
+                    </small>
                 </div>
             </div>
         </div>
     </div>
 
-    <button class="btn btn-primary" @onclick="StartExam" disabled="@(!_granted)">Sınava Başla</button>
+    <button class="btn btn-primary"
+            @onclick="StartExam"
+            disabled="@(!_granted || _starting)">
+        @(_starting ? "Başlatılıyor..." : "Sınava Başla")
+    </button>
 }
 
 @code {
     [Parameter] public string Token { get; set; } = default!;
+
     private string? _error;
-    private bool _granted = false;
+    private bool _granted;
+    private bool _requesting;
+    private bool _starting;
+    private string _statusText = "Bekleniyor";
 
     private async Task RequestPermission()
     {
-        var ok = await JS.InvokeAsync<bool>("mediaGate.request");
-        if (ok)
+        _requesting = true;
+        _statusText = "İzin isteniyor...";
+        StateHasChanged();
+
+        // JS: mediaGate.request(videoElementId, statusElementId)
+        var ok = await JS.InvokeAsync<bool>(
+            "mediaGate.request",
+            "previewVideo",
+            "statusText"
+        );
+
+        _granted = ok;
+        if (!ok)
         {
-            var attached = await JS.InvokeAsync<bool>("mediaGate.attachPreview", "#previewVideo");
-            _granted = attached;
+            _statusText = "İzin alınamadı!";
         }
-        else
-        {
-            _granted = false;
-        }
+
+        _requesting = false;
         StateHasChanged();
     }
 
     private async Task StartExam()
     {
+        if (!_granted) return;
+
         try
         {
+            _starting = true;
+            StateHasChanged();
+
             var res = await ExamSessionApp.StartByTokenAsync(Token);
             Nav.NavigateTo($"/exam/runner/{res.Id}");
         }
         catch (Exception ex)
         {
             _error = ex.Message;
+            _starting = false;
         }
     }
 
     public async ValueTask DisposeAsync()
     {
-        try { await JS.InvokeVoidAsync("mediaGate.stop"); } catch { }
+        try
+        {
+            // JS: mediaGate.stop(videoElementId, statusElementId)
+            await JS.InvokeVoidAsync("mediaGate.stop", "previewVideo", "statusText");
+        }
+        catch
+        {
+            // önemli değil, sayfa kapanırken hata yutulabilir
+        }
     }
 }

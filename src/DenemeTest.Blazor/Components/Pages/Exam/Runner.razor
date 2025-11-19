@@ -3,19 +3,18 @@
 
 @using DenemeTest.Exams
 @using DenemeTest.Exams.Dtos
-@using DenemeTest.Application.Exams
+@using QT = DenemeTest.Exams.Dtos.QuestionTypeDto
 @using Microsoft.JSInterop
 @using Microsoft.Extensions.Configuration
 
-@inject IExamSessionAppService SessionApp
-@inject IExamRunAppService RunApp
-@inject ICodeExecutionAppService CodeExecApp
+@inject DenemeTest.Application.Exams.IExamSessionAppService SessionApp
+@inject DenemeTest.Exams.IExamRunAppService RunApp
+@inject DenemeTest.Exams.ICodeExecutionAppService CodeExecApp
 @inject IJSRuntime JS
 @inject NavigationManager Nav
 @inject IConfiguration Config
 
-@* DTO enum için alias *@
-@using QT = DenemeTest.Exams.Dtos.QuestionTypeDto
+@implements IAsyncDisposable
 
 <h3>@(_test?.TestName ?? "Sınav")</h3>
 
@@ -23,97 +22,133 @@
     Sekme değiştirir veya odak kaybı yaşarsan sınavın iptal edilebilir. Lütfen bu pencereden ayrılma.
 </div>
 
-@if (_test == null)
+@if (!string.IsNullOrWhiteSpace(_error))
+{
+    <div class="alert alert-danger">@_error</div>
+}
+else if (_finished)
+{
+    <div class="alert alert-success">
+        Sınav tamamlandı. Puanın: <strong>@_finalScore</strong>
+    </div>
+
+    <button class="btn btn-secondary" @onclick="GoHome">Kapat</button>
+}
+else if (_test == null)
 {
     <p>Yükleniyor...</p>
 }
+else if (CurrentQuestion == null)
+{
+    <p>Bu oturuma ait soru bulunamadı.</p>
+}
 else
 {
-    <div class="mb-2">
-        Soru @(_index + 1) / @_questions.Count
-        @if (_violations > 0)
-        {
-            <span class="badge bg-danger ms-2">İhlal: @_violations / @_maxViolations</span>
-        }
+    <div class="mb-3">
+        Soru @(_currentIndex + 1) / @_test.Questions.Count
     </div>
 
     <div class="card mb-3">
         <div class="card-body">
-            <h5 class="card-title">@_current.Text</h5>
+            <h5 class="card-title">@CurrentQuestion.Text</h5>
 
-            @if (_current.Type == QT.MultipleChoice)
+            @switch (CurrentQuestion.Type)
             {
-                @foreach (var o in _current.Options)
-                {
-                    <div class="form-check">
-                        <input class="form-check-input"
-                               type="checkbox"
-                               checked="@IsChecked(o.Id)"
-                               @onchange="(e => ToggleOption(o.Id, e))"
-                               id="@o.Id">
-                        <label class="form-check-label" for="@o.Id">@o.Text</label>
+                case QT.MultipleChoice:
+                    <div class="mt-3">
+                        @foreach (var opt in CurrentQuestion.Options)
+                        {
+                            <div class="form-check">
+                                <input class="form-check-input"
+                                       type="checkbox"
+                                       checked="@IsOptionSelected(CurrentQuestion.Id, opt.Id)"
+                                       @onchange="(ChangeEventArgs e) => ToggleOption(CurrentQuestion.Id, opt.Id, (bool)e.Value!)" />
+                                <label class="form-check-label">@opt.Text</label>
+                            </div>
+                        }
                     </div>
-                }
-            }
-            else if (_current.Type == QT.Coding)
-            {
-                <label class="form-label">Kodunuzu buraya yazın</label>
-                <textarea class="form-control font-monospace" rows="12" @bind="_classicText"></textarea>
+                    break;
 
-                <div class="mt-2 d-flex gap-2 align-items-center">
-                    <button class="btn btn-outline-primary" @onclick="RunCode" disabled="@_isRunning">
-                        Çalıştır
-                    </button>
-
-                    @if (_isRunning)
-                    {
-                        <span class="text-muted">Çalıştırılıyor...</span>
-                    }
-                </div>
-
-                @if (!string.IsNullOrWhiteSpace(_runOutput))
-                {
-                    <div class="alert alert-success mt-3">
-                        <strong>Çıktı:</strong>
-                        <pre class="mb-0">@_runOutput</pre>
+                case QT.Classic:
+                    <div class="mt-3">
+                        <textarea class="form-control"
+                                  rows="6"
+                                  value="@GetTextAnswer(CurrentQuestion.Id)"
+                                  @onchange="(ChangeEventArgs e) => SetTextAnswer(CurrentQuestion.Id, e.Value?.ToString())">
+                                    </textarea>
                     </div>
-                }
+                    break;
 
-                @if (!string.IsNullOrWhiteSpace(_runError))
-                {
-                    <div class="alert alert-danger mt-3">
-                        <strong>Hata:</strong>
-                        <pre class="mb-0">@_runError</pre>
+                case QT.Coding:
+                    <div class="mt-3">
+                        <textarea class="form-control"
+                                  rows="14"
+                                  spellcheck="false"
+                                  value="@GetTextAnswer(CurrentQuestion.Id)"
+                                  @onchange="(ChangeEventArgs e) => SetTextAnswer(CurrentQuestion.Id, e.Value?.ToString())">
+                                    </textarea>
+
+                        <div class="mt-2 d-flex gap-2">
+                            <button class="btn btn-outline-secondary btn-sm"
+                                    disabled="@_runningCode"
+                                    @onclick="RunCurrentCode">
+                                @(_runningCode ? "Çalıştırılıyor..." : "Kodu Çalıştır")
+                            </button>
+                        </div>
+
+                        @if (!string.IsNullOrWhiteSpace(_runOutput))
+                        {
+                            <div class="mt-2">
+                                <label class="form-label mb-1">Çıktı</label>
+                                <pre class="bg-light p-2 rounded small">@_runOutput</pre>
+                            </div>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(_runError))
+                        {
+                            <div class="mt-2">
+                                <label class="form-label mb-1 text-danger">Hata</label>
+                                <pre class="bg-light p-2 rounded small text-danger">@_runError</pre>
+                            </div>
+                        }
                     </div>
-                }
-            }
-            else
-            {
-                <textarea class="form-control" rows="6" @bind="_classicText"></textarea>
+                    break;
             }
         </div>
     </div>
 
-    <div class="d-flex gap-2">
-        <button class="btn btn-outline-secondary" disabled="@(_index == 0)" @onclick="Prev">Önceki</button>
-        <button class="btn btn-outline-secondary" disabled="@(_index == _questions.Count - 1)" @onclick="Next">Sonraki</button>
-        <div class="flex-grow-1"></div>
-        <button class="btn btn-danger" @onclick="CancelExam">İptal</button>
+    <div class="d-flex justify-content-between">
+        <div>
+            <button class="btn btn-outline-secondary me-2"
+                    disabled="@(_currentIndex == 0 || _saving)"
+                    @onclick="PrevQuestion">
+                Önceki
+            </button>
 
-        <button class="btn btn-success"
-                disabled="@(_finishing || _finished)"
-                @onclick="FinishExam">
-            @_finishing
-            ? "Tamamlanıyor..."
-            : (_finished ? "Sınav Tamamlandı" : "Sınavı Bitir")
-        </button>
+            <button class="btn btn-outline-secondary"
+                    disabled="@(_test == null || _currentIndex >= _test.Questions.Count - 1 || _saving)"
+                    @onclick="NextQuestion">
+                Sonraki
+            </button>
+        </div>
+
+        <div class="d-flex gap-2">
+            <button class="btn btn-outline-danger"
+                    disabled="@_saving"
+                    @onclick="CancelExam">
+                Sınavı İptal Et
+            </button>
+
+            <button class="btn btn-primary"
+                    disabled="@_saving"
+                    @onclick="FinishExam">
+                Sınavı Bitir
+            </button>
+        </div>
     </div>
 
-    @if (!string.IsNullOrWhiteSpace(_finishMessage))
+    @if (_saving)
     {
-        <div class="alert alert-info mt-3">
-            @_finishMessage
-        </div>
+        <p class="text-muted mt-2">Cevap kaydediliyor...</p>
     }
 }
 
@@ -121,269 +156,279 @@ else
     [Parameter] public Guid SessionId { get; set; }
 
     private TestRunDto? _test;
-    private List<QuestionRunDto> _questions = new();
-    private QuestionRunDto _current = new();
-    private int _index = 0;
+    private int _currentIndex;
+    private bool _saving;
+    private bool _finished;
+    private int _finalScore;
+    private string? _error;
 
-    // cevap state
-    private readonly Dictionary<Guid, HashSet<Guid>> _selected = new(); // questionId -> optionIds
-    private readonly Dictionary<Guid, string> _classics = new();        // questionId -> text / code
-    private string _classicText = "";
+    // MCQ & text cevap state
+    private readonly Dictionary<Guid, HashSet<Guid>> _selected = new();
+    private readonly Dictionary<Guid, string?> _texts = new();
 
-    // kod çalıştırma state
-    private bool _isRunning = false;
-    private string _runOutput = string.Empty;
-    private string _runError = string.Empty;
-    private bool _runSuccess = false;
+    // Coding run state
+    private bool _runningCode;
+    private string? _runOutput;
+    private string? _runError;
 
-    // proctoring & kayıt
-    private DotNetObjectReference<RunnerCallbacks>? _objRef;
-    private int _violations = 0;
-    private int _maxViolations = 2; // appsettings: Exam:MaxViolations
-
-    // sınav bitiş state
-    private bool _finishing = false;
-    private bool _finished = false;
-    private string? _finishMessage;
-    private bool _cancelled = false;
+    private QuestionRunDto? CurrentQuestion =>
+        _test?.Questions != null && _currentIndex >= 0 && _currentIndex < _test.Questions.Count
+            ? _test.Questions[_currentIndex]
+            : null;
 
     protected override async Task OnInitializedAsync()
     {
-        var cfg = Config["Exam:MaxViolations"];
-        if (int.TryParse(cfg, out var mv) && mv > 0)
-            _maxViolations = mv;
-
-        _test = await RunApp.GetTestForRunAsync(SessionId);
-        _questions = _test.Questions;
-
-        if (_test.ShuffleQuestions)
-            _questions = _questions.OrderBy(_ => Guid.NewGuid()).ToList();
-
-        if (_test.ShuffleOptions)
+        try
         {
-            foreach (var q in _questions)
-                q.Options = q.Options.OrderBy(_ => Guid.NewGuid()).ToList();
-        }
+            _test = await RunApp.GetTestForRunAsync(SessionId);
 
-        _current = _questions.First();
-        LoadAnswerState();
+            if (_test?.Questions != null && _test.Questions.Count > 0)
+            {
+                _currentIndex = 0;
+
+                foreach (var q in _test.Questions)
+                {
+                    _selected[q.Id] = new HashSet<Guid>();
+                    _texts[q.Id] = null;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (firstRender)
-        {
-            _objRef = DotNetObjectReference.Create(new RunnerCallbacks(this));
-            await JS.InvokeVoidAsync("examProctor.init", _objRef, SessionId.ToString());
-            try { await JS.InvokeVoidAsync("examRecorder.start", SessionId.ToString(), 2000, true); } catch { }
-        }
-    }
-
-    private async Task Prev()
-    {
-        await SaveCurrentAsync();
-        _index--;
-        _current = _questions[_index];
-        LoadAnswerState();
-    }
-
-    private async Task Next()
-    {
-        await SaveCurrentAsync();
-        _index++;
-        _current = _questions[_index];
-        LoadAnswerState();
-    }
-
-    private void LoadAnswerState()
-    {
-        if (_current.Type == QT.MultipleChoice)
-        {
-            if (!_selected.TryGetValue(_current.Id, out var set))
-            {
-                set = new HashSet<Guid>();
-                _selected[_current.Id] = set;
-            }
-            _classicText = string.Empty;
-        }
-        else
-        {
-            _selected.Remove(_current.Id);
-            _classicText = _classics.TryGetValue(_current.Id, out var t) ? t : "";
-        }
-
-        // soru değişince kod çalıştırma sonuçlarını temizle
-        _runOutput = string.Empty;
-        _runError = string.Empty;
-        _isRunning = false;
-        _runSuccess = false;
-
-        StateHasChanged();
-    }
-
-    private bool IsChecked(Guid optionId)
-        => _selected.TryGetValue(_current.Id, out var set) && set.Contains(optionId);
-
-    private void ToggleOption(Guid optionId, ChangeEventArgs e)
-    {
-        if (!_selected.TryGetValue(_current.Id, out var set))
-        {
-            set = new HashSet<Guid>();
-            _selected[_current.Id] = set;
-        }
-
-        var isOn = e.Value is bool b && b;
-        if (isOn) set.Add(optionId); else set.Remove(optionId);
-    }
-
-    private async Task SaveCurrentAsync()
-    {
-        if (_current.Type == QT.MultipleChoice)
-        {
-            var ids = _selected.TryGetValue(_current.Id, out var set) ? set.ToArray() : Array.Empty<Guid>();
-            await RunApp.SubmitAnswerAsync(new SubmitAnswerDto
-            {
-                SessionId = SessionId,
-                QuestionId = _current.Id,
-                SelectedOptionIds = ids
-            });
-        }
-        else
-        {
-            _classics[_current.Id] = _classicText ?? "";
-            await RunApp.SubmitAnswerAsync(new SubmitAnswerDto
-            {
-                SessionId = SessionId,
-                QuestionId = _current.Id,
-                TextAnswer = _classicText ?? ""
-            });
-        }
-    }
-
-    private async Task RunCode()
-    {
-        // sadece coding sorularında çalışmalı
-        if (_current.Type != QT.Coding)
+        if (!firstRender || _test == null)
             return;
 
-        _isRunning = true;
-        _runOutput = string.Empty;
-        _runError = string.Empty;
+        await SafeInvokeVoidAsync("examProctor.init", SessionId.ToString());
+        await SafeInvokeVoidAsync("examRecorder.start", SessionId.ToString(), 2000, true);
+    }
+
+    private async Task SafeInvokeVoidAsync(string identifier, params object[] args)
+    {
+        try
+        {
+            await JS.InvokeVoidAsync(identifier, args);
+        }
+        catch
+        {
+            // JS tarafı yoksa sessiz geç
+        }
+    }
+
+    // ---------- cevap state helpers ----------
+
+    private bool IsOptionSelected(Guid questionId, Guid optionId)
+        => _selected.TryGetValue(questionId, out var set) && set.Contains(optionId);
+
+    private void ToggleOption(Guid questionId, Guid optionId, bool selected)
+    {
+        if (!_selected.TryGetValue(questionId, out var set))
+        {
+            set = new HashSet<Guid>();
+            _selected[questionId] = set;
+        }
+
+        if (selected)
+            set.Add(optionId);
+        else
+            set.Remove(optionId);
+    }
+
+    private string GetTextAnswer(Guid questionId)
+        => _texts.TryGetValue(questionId, out var t) ? t ?? string.Empty : string.Empty;
+
+    private void SetTextAnswer(Guid questionId, string? text)
+    {
+        _texts[questionId] = text;
+    }
+
+    // ---------- Navigation ----------
+
+    private async Task PrevQuestion()
+    {
+        await SaveCurrentAsync();
+        if (_currentIndex > 0)
+        {
+            _currentIndex--;
+            ResetRunState();
+        }
+    }
+
+    private async Task NextQuestion()
+    {
+        await SaveCurrentAsync();
+        if (_test != null && _currentIndex < _test.Questions.Count - 1)
+        {
+            _currentIndex++;
+            ResetRunState();
+        }
+    }
+
+    private void ResetRunState()
+    {
+        _runOutput = null;
+        _runError = null;
+    }
+
+    // ---------- Coding: kod çalıştırma ----------
+
+    private async Task RunCurrentCode()
+    {
+        if (_test == null || CurrentQuestion == null || CurrentQuestion.Type != QT.Coding)
+            return;
+
+        _runningCode = true;
+        _runOutput = null;
+        _runError = null;
         StateHasChanged();
 
         try
         {
-            var request = new RunCodeRequestDto
+            var code = GetTextAnswer(CurrentQuestion.Id);
+
+            var req = new RunCodeRequestDto
             {
                 SessionId = SessionId,
-                QuestionId = _current.Id,
-                Code = _classicText ?? string.Empty,
+                QuestionId = CurrentQuestion.Id,
+                Code = code,
                 Language = "csharp"
-                // Input burada null, test-case'ler backend tarafında ScoreCodingQuestionAsync içinde ayarlanıyor
             };
 
-            var result = await CodeExecApp.RunAsync(request);
-            _runSuccess = result.Success;
-            _runOutput = result.Output;
-            _runError = result.Error;
+            var res = await CodeExecApp.RunAsync(req);
+
+            _runOutput = res.Output;
+            _runError = res.Error;
         }
         catch (Exception ex)
         {
-            _runSuccess = false;
-            _runOutput = string.Empty;
-            _runError = $"Kod çalıştırma sırasında beklenmeyen bir hata oluştu: {ex.Message}";
+            _runError = ex.Message;
         }
         finally
         {
-            _isRunning = false;
+            _runningCode = false;
             StateHasChanged();
         }
     }
 
-    public async Task ReportFocusLost(string detail)
+    // ---------- Cevap kaydetme & sınav bitirme ----------
+
+    private async Task SaveCurrentAsync()
     {
-        _violations++;
-        await SessionApp.RecordEventAsync(SessionId, ProctoringEventType.FocusLost, detail);
+        if (_test == null || CurrentQuestion == null)
+            return;
 
-        if (_violations >= _maxViolations)
-        {
-            try { await JS.InvokeVoidAsync("examRecorder.cancel"); } catch { }
-            await SessionApp.CancelAsync(SessionId, $"Odak kaybı {_violations} kez");
-            Nav.NavigateTo("/");
-        }
-
+        _saving = true;
         StateHasChanged();
-    }
 
-    private async Task CancelExam()
-    {
-        try { await JS.InvokeVoidAsync("examRecorder.cancel"); } catch { }
-        await SessionApp.CancelAsync(SessionId, "Kullanıcı iptal");
-        Nav.NavigateTo("/");
+        try
+        {
+            var q = CurrentQuestion;
+
+            Guid[]? selectedIds = null;
+            string? textAnswer = null;
+
+            if (q.Type == QT.MultipleChoice)
+            {
+                selectedIds = _selected[q.Id].ToArray();
+            }
+            else if (q.Type == QT.Classic || q.Type == QT.Coding)
+            {
+                textAnswer = GetTextAnswer(q.Id);
+            }
+
+            var dto = new SubmitAnswerDto
+            {
+                SessionId = SessionId,
+                QuestionId = q.Id,
+                SelectedOptionIds = selectedIds,
+                TextAnswer = textAnswer
+            };
+
+            await RunApp.SubmitAnswerAsync(dto);
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+            StateHasChanged();
+        }
     }
 
     private async Task FinishExam()
     {
-        if (_finishing || _finished)
-        {
+        if (_finished || _test == null)
             return;
-        }
-
-        _finishing = true;
-        _finishMessage = null;
-        StateHasChanged();
 
         try
         {
-            // Son sorudaki cevabı kaydet
             await SaveCurrentAsync();
 
-            try { await JS.InvokeVoidAsync("examRecorder.stop"); } catch { }
-
-            // Puanı hesapla ve Score tablosuna yaz
             var score = await RunApp.ComputeAndSaveScoreAsync(SessionId);
+            _finalScore = score;
 
-            // Oturumu bitmiş işaretle (skoru tekrar yazmıyoruz)
-            await SessionApp.FinishAsync(SessionId, null, "Runner'dan otomatik tamamlandı.");
+            await SessionApp.FinishAsync(SessionId, score, "Runner'dan otomatik tamamlandı.");
 
             _finished = true;
-            _finishMessage = $"Sınav tamamlandı. Puanın: {score}";
+
+            await SafeInvokeVoidAsync("examRecorder.stop", SessionId.ToString());
         }
         catch (Exception ex)
         {
-            var msg = ex.Message;
-
-            if (msg.Contains("iptal", StringComparison.OrdinalIgnoreCase))
-            {
-                _cancelled = true;
-                _finishMessage = "Sınav oturumu iptal edilmiş görünüyor. Devam edemezsin.";
-            }
-            else
-            {
-                _finishMessage = $"Sınav bitirilirken bir hata oluştu: {msg}";
-            }
+            _error = ex.Message;
         }
-        finally
+    }
+
+    private async Task CancelExam()
+    {
+        try
         {
-            _finishing = false;
-            StateHasChanged();
+            await SessionApp.CancelAsync(SessionId, "Kullanıcı iptal etti.");
+            await SafeInvokeVoidAsync("examRecorder.cancel", SessionId.ToString());
+            GoHome();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
         }
     }
 
-    public void Dispose()
+    private void GoHome()
     {
-        _objRef?.Dispose();
-        try { JS.InvokeVoidAsync("examRecorder.cancel"); } catch { }
+        Nav.NavigateTo("/");
     }
 
-    // JS -> .NET köprüsü
-    public class RunnerCallbacks
+    public async ValueTask DisposeAsync()
     {
-        private readonly Runner _page;
-        public RunnerCallbacks(Runner page) => _page = page;
+        try
+        {
+            await SafeInvokeVoidAsync("examRecorder.stop", SessionId.ToString());
+            await SafeInvokeVoidAsync("examProctor.dispose", SessionId.ToString());
+        }
+        catch
+        {
+            // önemli değil
+        }
+    }
 
-        [JSInvokable]
-        public Task ReportFocusLost(string sessionId, string detail)
-            => _page.ReportFocusLost(detail);
+    // Proctoring tarafı JS'den çağırabilir
+    [JSInvokable]
+    public async Task ReportFocusLost(string? detail)
+    {
+        try
+        {
+            await SessionApp.RecordEventAsync(SessionId, ProctoringEventType.FocusLost, detail);
+        }
+        catch
+        {
+            // sessiz geç
+        }
     }
 }

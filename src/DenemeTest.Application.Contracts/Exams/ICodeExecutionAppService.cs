@@ -1,11 +1,14 @@
 ﻿using System.Threading.Tasks;
-using Volo.Abp.Application.Services;
 using DenemeTest.Exams.Dtos;
+using Volo.Abp.Application.Services;
 
-namespace DenemeTest.Exams
+namespace DenemeTest.Exams;
+
+public interface ICodeExecutionAppService : IApplicationService
 {
-    public interface ICodeExecutionAppService : IApplicationService
-    {
-        Task<RunCodeResultDto> RunAsync(RunCodeRequestDto input);
-    }
+    /// <summary>
+    /// Verilen kodu çalıştırır ve çıktı/hata bilgisini döner.
+    /// Şimdilik gerçek sandbox değil, güvenli bir stub.
+    /// </summary>
+    Task<RunCodeResultDto> RunAsync(RunCodeRequestDto input);
 }

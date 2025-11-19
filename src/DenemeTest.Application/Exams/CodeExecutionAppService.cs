@@ -1,66 +1,53 @@
-﻿using System;
-using System.Threading.Tasks;
+﻿using System.Threading.Tasks;
+using DenemeTest.Exams;
 using DenemeTest.Exams.Dtos;
 using Volo.Abp.Application.Services;
 
-namespace DenemeTest.Exams
+namespace DenemeTest.Application.Exams;
+
+/// <summary>
+/// Şimdilik DEMO/STUB code executor.
+/// 
+/// - Gerçek anlamda C# kodu çalıştırmıyor.
+/// - Güvenlik için kodu derleyip çalıştırmıyoruz.
+/// - UI ve puanlama akışını test etmek için kullanıyoruz.
+/// 
+/// İleride burayı Docker içinde gerçek sandbox ile değiştireceğiz.
+/// </summary>
+public class CodeExecutionAppService : ApplicationService, ICodeExecutionAppService
 {
-    /// <summary>
-    /// Şimdilik sadece dummy çalışan bir kod yürütme servisi.
-    /// İleride buraya gerçek sandbox / Docker tabanlı execution gelecek.
-    /// </summary>
-    public class CodeExecutionAppService : ApplicationService, ICodeExecutionAppService
+    public async Task<RunCodeResultDto> RunAsync(RunCodeRequestDto input)
     {
-        public async Task<RunCodeResultDto> RunAsync(RunCodeRequestDto input)
+        // Asenkron signature'ı korumak için
+        await Task.Yield();
+
+        // Çok basit bir davranış:
+        // - Eğer kod boşsa hata dön
+        // - Değilse "demo çıktısı" üret
+        if (string.IsNullOrWhiteSpace(input.Code))
         {
-            if (string.IsNullOrWhiteSpace(input.Code))
+            return new RunCodeResultDto
             {
-                return new RunCodeResultDto
-                {
-                    Success = false,
-                    Output = string.Empty,
-                    Error = "Kod alanı boş olamaz.",
-                    ExecutedAt = Clock.Now
-                };
-            }
-
-            // ----------------------------
-            // DUMMY ERROR DETECTION
-            // ----------------------------
-            var hasDummyError = input.Code.Contains("error", StringComparison.OrdinalIgnoreCase);
-
-            var result = new RunCodeResultDto
-            {
-                ExecutedAt = Clock.Now
+                Success = false,
+                ExitCode = 1,
+                Output = string.Empty,
+                Error = "Kod boş gönderildi."
             };
-
-            if (hasDummyError)
-            {
-                result.Success = false;
-                result.Output = string.Empty;
-                result.Error = "Derleme hatası: 'error' kelimesi bulundu (dummy kontrol).";
-                return result;
-            }
-
-            // ----------------------------
-            // INPUT DESTEKLİ DUMMY OUTPUT
-            // ----------------------------
-            if (!string.IsNullOrWhiteSpace(input.Input))
-            {
-                // Test-case input’unu simüle ederek döndürüyoruz
-                result.Success = true;
-                result.Output = $"INPUT: {input.Input}".Trim();
-                result.Error = string.Empty;
-            }
-            else
-            {
-                // Input yoksa varsayılan dummy çıktı
-                result.Success = true;
-                result.Output = "Kod başarıyla çalıştırıldı (dummy).";
-                result.Error = string.Empty;
-            }
-
-            return await Task.FromResult(result);
         }
+
+        // Gerçek sistemde burada:
+        // 1) Kod dosyasını oluştur
+        // 2) Docker konteyner içinde derle/çalıştır
+        // 3) STDOUT/STDERR'i al ve dön
+        // Şimdilik sadece demo mesajı dönüyoruz.
+        var output = $"[Demo executor] Dil: {input.Language} | Kod uzunluğu: {input.Code.Length} karakter.";
+
+        return new RunCodeResultDto
+        {
+            Success = true,
+            ExitCode = 0,
+            Output = output,
+            Error = null
+        };
     }
 }

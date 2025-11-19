@@ -1,23 +1,26 @@
 ﻿using System;
+using Volo.Abp.Application.Dtos;
 
-namespace DenemeTest.Exams.Dtos
+namespace DenemeTest.Exams.Dtos;
+
+public class RunCodeRequestDto : EntityDto<Guid>
 {
-    public class RunCodeRequestDto
-    {
-        // Hangi oturumda (session) bu kod çalıştırılıyor
-        public Guid SessionId { get; set; }
+    public Guid SessionId { get; set; }
+    public Guid QuestionId { get; set; }
 
-        // Hangi soruya ait kod
-        public Guid QuestionId { get; set; }
+    /// <summary>
+    /// Kullanıcının yazdığı kod.
+    /// </summary>
+    public string Code { get; set; } = string.Empty;
 
-        // Adayın yazdığı kod
-        public string Code { get; set; } = string.Empty;
+    /// <summary>
+    /// "csharp", "python" vs. Şimdilik hep "csharp" göndereceğiz.
+    /// </summary>
+    public string Language { get; set; } = "csharp";
 
-        // Şimdilik tek dil varsayalım; ileride C#, Java, Python vs. ekleyebiliriz
-        public string Language { get; set; } = "csharp";
-
-        // Test-case girişi (stdin / fonksiyon parametresi vs.)
-        // Şu anki dummy executor bunu kullanmıyor ama gerçek implementasyonda buradan beslenecek.
-        public string? Input { get; set; }
-    }
+    /// <summary>
+    /// Test-case input’u. Sınav sırasında otomatik puanlama için kullanılıyor.
+    /// Kodu manuel çalıştırırken (Kodu Çalıştır butonu) genelde null olacak.
+    /// </summary>
+    public string? Input { get; set; }
 }
