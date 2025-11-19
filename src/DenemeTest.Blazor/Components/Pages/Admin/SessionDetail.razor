@@ -17,15 +17,42 @@ else
         <div class="card-body">
             <h5>@_detail.CandidateFirstName @_detail.CandidateLastName</h5>
             <p><b>E-posta:</b> @_detail.CandidateEmail</p>
+
+            @{
+                var statusText = _detail.IsCancelled
+                ? "İptal"
+                : (_detail.EndTime.HasValue ? "Tamamlandı" : "Devam Ediyor");
+
+                var statusCss = _detail.IsCancelled
+                ? "badge bg-danger"
+                : (_detail.EndTime.HasValue ? "badge bg-success" : "badge bg-secondary");
+            }
+
+            <p>
+                <b>Durum:</b>
+                <span class="@statusCss">@statusText</span>
+            </p>
+
             <p><b>Başlangıç:</b> @(_detail.StartTime?.ToString("yyyy-MM-dd HH:mm") ?? "-")</p>
             <p><b>Bitiş:</b> @(_detail.EndTime?.ToString("yyyy-MM-dd HH:mm") ?? "-")</p>
             <p><b>İhlal sayısı:</b> @_detail.Violations</p>
 
-            <a class="btn btn-sm btn-outline-secondary"
+            @if (_detail.IsCancelled && !string.IsNullOrWhiteSpace(_detail.CancelReason))
+            {
+                <p>
+                    <b>İptal sebebi:</b> @_detail.CancelReason
+                </p>
+            }
+
+            <a class="btn btn-sm btn-outline-secondary me-2"
                href="@($"/api/recordings/download?sessionId={SessionId}")"
                target="_blank">
                 Kaydı indir
             </a>
+
+            <button class="btn btn-sm btn-outline-primary" @onclick="@GoBack">
+                Listeye dön
+            </button>
         </div>
     </div>
 
@@ -66,5 +93,10 @@ else
     protected override async Task OnInitializedAsync()
     {
         _detail = await ReportsApp.GetSessionDetailAsync(SessionId);
+    }
+
+    private void GoBack()
+    {
+        Nav.NavigateTo("/admin/reports");
     }
 }

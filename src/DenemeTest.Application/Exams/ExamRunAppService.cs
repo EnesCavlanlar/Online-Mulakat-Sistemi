@@ -115,11 +115,7 @@ namespace DenemeTest.Application.Exams
                     Points = q.Points,
                     Options = options
                         .Where(o => o.QuestionId == q.Id)
-                        .Select(o => new QuestionOptionRunDto
-                        {
-                            Id = o.Id,
-                            Text = o.Text
-                        })
+                        .Select(o => new QuestionOptionRunDto { Id = o.Id, Text = o.Text })
                         .ToList()
                 }).ToList()
             };
@@ -164,7 +160,7 @@ namespace DenemeTest.Application.Exams
                 throw new UserFriendlyException("Oturum iptal.");
 
             var questions = await _questionRepo.GetListAsync(q => q.TestId == sess.TestId);
-            var qIds = questions.Select(x => x.Id).ToList();
+            var qIds = questions.Select(q => q.Id).ToList();
             var options = await _optionRepo.GetListAsync(o => qIds.Contains(o.QuestionId));
             var answers = await _answerRepo.GetListAsync(a => a.ExamSessionId == sessionId);
 
@@ -177,22 +173,13 @@ namespace DenemeTest.Application.Exams
 
                 if (q.Type == QuestionType.MultipleChoice)
                 {
-                    // Tüm doğru seçenekleri topla
-                    var correct = options
-                        .Where(o => o.QuestionId == q.Id && o.IsCorrect)
-                        .Select(o => o.Id)
-                        .OrderBy(x => x)
-                        .ToArray();
-
-                    // Adayın seçtikleri
+                    var correct = options.Where(o => o.QuestionId == q.Id && o.IsCorrect)
+                                         .Select(o => o.Id).OrderBy(x => x).ToArray();
                     var chosen = (ans?.SelectedOptionIds ?? Array.Empty<Guid>())
-                        .OrderBy(x => x)
-                        .ToArray();
+                                  .OrderBy(x => x).ToArray();
 
                     if (correct.SequenceEqual(chosen))
-                    {
                         earned += q.Points;
-                    }
                 }
                 else if (q.Type == QuestionType.Classic)
                 {
@@ -202,63 +189,13 @@ namespace DenemeTest.Application.Exams
                 }
                 else if (q.Type == QuestionType.Coding)
                 {
-                    // Kod soruları için test-case tabanlı puanlama
-                    var candCode = ans?.TextAnswer ?? string.Empty;
-                    if (string.IsNullOrWhiteSpace(candCode))
-                    {
-                        // Kod yoksa puan da yok
-                        continue;
-                    }
-
-                    var testCases = await _codeTestRepo.GetListAsync(tc => tc.QuestionId == q.Id);
-                    if (testCases == null || testCases.Count == 0)
-                    {
-                        // Test-case tanımlı değilse şimdilik puan vermeyelim
-                        continue;
-                    }
-
-                    int totalWeight = testCases.Sum(tc => Math.Max(1, tc.Weight));
-                    int passedWeight = 0;
-
-                    foreach (var tc in testCases)
-                    {
-                        var runReq = new RunCodeRequestDto
-                        {
-                            SessionId = sess.Id,
-                            QuestionId = q.Id,
-                            Code = candCode,
-                            Language = "csharp",
-                            Input = tc.Input // 🔴 test-case input’u artık servise gidiyor
-                        };
-
-                        var runRes = await _codeExec.RunAsync(runReq);
-
-                        if (!runRes.Success)
-                        {
-                            // Derleme/çalışma hatasında bu test-case başarısız sayılır
-                            continue;
-                        }
-
-                        var actual = (runRes.Output ?? string.Empty).Trim();
-                        var expected = (tc.ExpectedOutput ?? string.Empty).Trim();
-
-                        if (actual == expected)
-                        {
-                            passedWeight += Math.Max(1, tc.Weight);
-                        }
-                    }
-
-                    if (totalWeight > 0 && passedWeight > 0)
-                    {
-                        var ratio = passedWeight / (double)totalWeight;
-                        earned += (int)Math.Round(q.Points * ratio);
-                    }
+                    earned += await ScoreCodingQuestionAsync(q, ans, sessionId);
                 }
             }
 
             var finalScore = (int)Math.Round(100.0 * earned / totalPoints);
 
-            // Eski skor varsa silip yeniden oluştur (entity set edilebilir değil)
+            // Eski skor varsa silip yeniden oluştur
             var existing = await _scoreRepo.FirstOrDefaultAsync(s => s.ExamSessionId == sessionId);
             if (existing != null)
             {
@@ -271,10 +208,69 @@ namespace DenemeTest.Application.Exams
                 finalScore,
                 "Auto-computed (MCQ + classic + coding)"
             );
-
             await _scoreRepo.InsertAsync(sc, autoSave: true);
 
             return finalScore;
+        }
+
+        // -------------------- CODING PUANLAMA YARDIMCI --------------------
+
+        private async Task<int> ScoreCodingQuestionAsync(Question q, Answer? ans, Guid sessionId)
+        {
+            // Cevap yoksa puan yok
+            var code = ans?.TextAnswer;
+            if (string.IsNullOrWhiteSpace(code))
+            {
+                return 0;
+            }
+
+            // İlgili test-case'leri çek
+            var cases = await _codeTestRepo.GetListAsync(x => x.QuestionId == q.Id);
+            if (cases == null || cases.Count == 0)
+            {
+                // Test-case tanımlı değilse şimdilik puan vermiyoruz
+                return 0;
+            }
+
+            var totalWeight = cases.Sum(c => Math.Max(1, c.Weight));
+            var passedWeight = 0;
+
+            foreach (var tc in cases)
+            {
+                var req = new RunCodeRequestDto
+                {
+                    SessionId = sessionId,
+                    QuestionId = q.Id,
+                    Code = code,
+                    Language = "csharp",
+                    Input = tc.Input
+                };
+
+                var res = await _codeExec.RunAsync(req);
+
+                if (!res.Success)
+                {
+                    // Derleme/çalışma hatasında bu test-case'i başarısız sayıyoruz
+                    continue;
+                }
+
+                var actual = (res.Output ?? string.Empty).Trim();
+                var expected = (tc.ExpectedOutput ?? string.Empty).Trim();
+
+                if (actual.Equals(expected, StringComparison.OrdinalIgnoreCase))
+                {
+                    passedWeight += Math.Max(1, tc.Weight);
+                }
+            }
+
+            if (totalWeight <= 0)
+            {
+                return 0;
+            }
+
+            var ratio = (double)passedWeight / totalWeight;
+            var earned = (int)Math.Round(q.Points * ratio);
+            return earned;
         }
 
         // -------- helpers --------
