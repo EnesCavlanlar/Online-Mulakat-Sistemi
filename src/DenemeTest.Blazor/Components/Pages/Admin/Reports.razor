@@ -85,11 +85,10 @@ else
                     </td>
 
                     <td>
-                        <a class="btn btn-sm btn-outline-secondary"
-                           href="@($"/api/recordings/download?sessionId={row.ExamSessionId}")"
-                           target="_blank">
+                        <button class="btn btn-sm btn-outline-secondary"
+                                @onclick="() => DownloadRecording(row.ExamSessionId)">
                             Kaydı indir
-                        </a>
+                        </button>
                     </td>
                     <td>
                         <button class="btn btn-sm btn-primary"
@@ -119,6 +118,12 @@ else
     void GoToDetail(Guid id)
     {
         Nav.NavigateTo($"/admin/session/{id}");
+    }
+
+    private void DownloadRecording(Guid sessionId)
+    {
+        var url = $"/api/recordings/download?sessionId={sessionId}";
+        Nav.NavigateTo(url, forceLoad: true);
     }
 
     // Satırın CSS sınıfını durumuna göre belirle

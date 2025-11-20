@@ -34,6 +34,43 @@ else if (_finished)
 
     <button class="btn btn-secondary" @onclick="GoHome">Kapat</button>
 }
+else if (!_mediaReady)
+{
+    <div class="card mt-3">
+        <div class="card-body">
+            <h5 class="card-title">Kamera ve Mikrofon İzni</h5>
+            <p>
+                Sınava başlamadan önce tarayıcının kamera ve mikrofon izni vermesi gerekiyor.
+                Tarayıcın bir izin penceresi gösterecek; lütfen <strong>İzin ver</strong> seçeneğini işaretle.
+            </p>
+
+            <div class="row">
+                <div class="col-md-6">
+                    <video id="exam-media-preview"
+                           autoplay
+                           muted
+                           playsinline
+                           style="max-width: 100%; border-radius: 8px; background: #000;">
+                    </video>
+                </div>
+                <div class="col-md-6">
+                    <span id="exam-media-status" class="text-muted"></span>
+
+                    @if (_mediaRequestInProgress)
+                    {
+                        <p class="mt-2 text-info">İzin isteniyor, lütfen tarayıcı penceresini kontrol et...</p>
+                    }
+
+                    <button class="btn btn-primary mt-3"
+                            disabled="@_mediaRequestInProgress"
+                            @onclick="RequestMediaAsync">
+                        @(_mediaRequestInProgress ? "İzin Bekleniyor..." : "Kamera ve Mikrofonu Aç")
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
 else if (_test == null)
 {
     <p>Yükleniyor...</p>
@@ -44,8 +81,14 @@ else if (CurrentQuestion == null)
 }
 else
 {
-    <div class="mb-3">
-        Soru @(_currentIndex + 1) / @_test.Questions.Count
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <div>
+            Soru @(_currentIndex + 1) / @_test.Questions.Count
+        </div>
+
+        <div class="badge bg-secondary fs-6">
+            @FormatRemaining()
+        </div>
     </div>
 
     <div class="card mb-3">
@@ -162,6 +205,15 @@ else
     private int _finalScore;
     private string? _error;
 
+    // media / proctoring state
+    private bool _mediaReady = false;
+    private bool _mediaRequestInProgress = false;
+
+    // timer
+    private int _remainingSeconds;
+    private System.Threading.Timer? _timer;
+    private bool _timeUpHandled = false;
+
     // MCQ & text cevap state
     private readonly Dictionary<Guid, HashSet<Guid>> _selected = new();
     private readonly Dictionary<Guid, string?> _texts = new();
@@ -192,7 +244,6 @@ else
 
                     if (q.Type == QT.Coding)
                     {
-                        // Coding sorular için temel kod iskeleti
                         _texts[q.Id] = GetDefaultCodeTemplate();
                     }
                     else
@@ -201,6 +252,15 @@ else
                     }
                 }
             }
+
+            // süre: appsettings.Exam.DefaultDurationMinutes yoksa 30 dk
+            var durationStr = Config["Exam:DefaultDurationMinutes"];
+            if (!int.TryParse(durationStr, out var minutes) || minutes <= 0)
+            {
+                minutes = 30;
+            }
+
+            _remainingSeconds = minutes * 60;
         }
         catch (Exception ex)
         {
@@ -208,13 +268,101 @@ else
         }
     }
 
-    protected override async Task OnAfterRenderAsync(bool firstRender)
+    protected override Task OnAfterRenderAsync(bool firstRender)
     {
-        if (!firstRender || _test == null)
-            return;
+        // Kamera/mikrofon izni biz butona basınca isteyeceğiz,
+        // burada sadece ilk render sonrası bir şey yapmıyoruz.
+        return Task.CompletedTask;
+    }
 
-        await SafeInvokeVoidAsync("examProctor.init", SessionId.ToString());
-        await SafeInvokeVoidAsync("examRecorder.start", SessionId.ToString(), 2000, true);
+    // ---------- media izin & kayıt başlatma ----------
+
+    private async Task RequestMediaAsync()
+    {
+        _mediaRequestInProgress = true;
+        StateHasChanged();
+
+        try
+        {
+            // exam-media.js içindeki window.mediaGate.request(videoId, statusSpanId)
+            var ok = await SafeInvokeAsync<bool>("mediaGate.request", "exam-media-preview", "exam-media-status");
+
+            if (!ok)
+            {
+                _error = "Kamera/mikrofon izni alınamadı. Lütfen tarayıcı ayarlarını kontrol et.";
+                _mediaRequestInProgress = false;
+                return;
+            }
+
+            // izin alındı → proctor + recorder başlat
+            await SafeInvokeVoidAsync("examProctor.init", SessionId.ToString());
+            await SafeInvokeVoidAsync("examRecorder.start", SessionId.ToString(), 2000, true);
+
+            _mediaReady = true;
+            _mediaRequestInProgress = false;
+
+            StartTimer();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+            _mediaRequestInProgress = false;
+        }
+        finally
+        {
+            StateHasChanged();
+        }
+    }
+
+    private void StartTimer()
+    {
+        _timer?.Dispose();
+
+        _timer = new System.Threading.Timer(async _ =>
+        {
+            if (_remainingSeconds <= 0)
+            {
+                if (_timeUpHandled) return;
+                _timeUpHandled = true;
+                _timer?.Dispose();
+
+                await InvokeAsync(async () =>
+                {
+                    _error = "Süre doldu, sınav otomatik olarak sonlandırılıyor.";
+                    await FinishExam();
+                    StateHasChanged();
+                });
+
+                return;
+            }
+
+            _remainingSeconds--;
+
+            await InvokeAsync(StateHasChanged);
+        },
+        null,
+        1000,
+        1000);
+    }
+
+    private string FormatRemaining()
+    {
+        if (_remainingSeconds < 0) _remainingSeconds = 0;
+        var m = _remainingSeconds / 60;
+        var s = _remainingSeconds % 60;
+        return $"{m:D2}:{s:D2}";
+    }
+
+    private async Task<T> SafeInvokeAsync<T>(string identifier, params object[] args)
+    {
+        try
+        {
+            return await JS.InvokeAsync<T>(identifier, args);
+        }
+        catch
+        {
+            return default!;
+        }
     }
 
     private async Task SafeInvokeVoidAsync(string identifier, params object[] args)
@@ -431,6 +579,7 @@ public class Program
     {
         try
         {
+            _timer?.Dispose();
             await SafeInvokeVoidAsync("examRecorder.stop", SessionId.ToString());
             await SafeInvokeVoidAsync("examProctor.dispose", SessionId.ToString());
         }
