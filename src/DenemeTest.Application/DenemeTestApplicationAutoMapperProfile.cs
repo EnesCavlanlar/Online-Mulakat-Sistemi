@@ -1,4 +1,4 @@
-using AutoMapper;
+﻿using AutoMapper;
 using DenemeTest.Exams;
 using DenemeTest.Exams.Dtos;
 
@@ -15,6 +15,13 @@ public class DenemeTestApplicationAutoMapperProfile : Profile
         // Question
         CreateMap<Question, QuestionDto>();
         CreateMap<CreateUpdateQuestionDto, Question>();
+
+        // 🔥 CodeTestCase Map – ReverseMap kaldırıldı, Id IGNORE EDİLDİ
+        CreateMap<CodeTestCase, CodeTestCaseDto>();
+
+        CreateMap<CodeTestCaseDto, CodeTestCase>()
+            .ForMember(x => x.Id, opt => opt.Ignore());  // <-- ÇÖZÜM
+                                                         // Not: Id hiçbir zaman DTO’dan gelmeyecek, EF yeni Guid oluşturacak.
 
         // QuestionOption
         CreateMap<QuestionOption, QuestionOptionDto>();

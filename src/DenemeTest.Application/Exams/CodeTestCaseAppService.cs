@@ -4,11 +4,17 @@ using System.Linq;
 using System.Threading.Tasks;
 using DenemeTest.Exams;
 using DenemeTest.Exams.Dtos;
+using Volo.Abp;
 using Volo.Abp.Application.Services;
 using Volo.Abp.Domain.Repositories;
 
 namespace DenemeTest.Application.Exams
 {
+    /// <summary>
+    /// Coding sorularına ait test-case yönetimi.
+    /// Admin / Sorular ekranındaki "Kodlama Test Case'leri"
+    /// bu servis üzerinden çalışır.
+    /// </summary>
     public class CodeTestCaseAppService : ApplicationService, ICodeTestCaseAppService
     {
         private readonly IRepository<CodeTestCase, Guid> _repo;
@@ -20,46 +26,37 @@ namespace DenemeTest.Application.Exams
 
         public async Task<List<CodeTestCaseDto>> GetListByQuestionAsync(Guid questionId)
         {
-            var list = await _repo.GetListAsync(x => x.QuestionId == questionId);
+            if (questionId == Guid.Empty)
+                throw new UserFriendlyException("QuestionId boş olamaz.");
 
-            return list
-                .OrderBy(x => x.CreationTime)
-                .Select(x => new CodeTestCaseDto
-                {
-                    Id = x.Id,
-                    QuestionId = x.QuestionId,
-                    Input = x.Input ?? string.Empty,
-                    ExpectedOutput = x.ExpectedOutput ?? string.Empty,
-                    Weight = x.Weight
-                })
-                .ToList();
+            var entities = await _repo.GetListAsync(x => x.QuestionId == questionId);
+
+            return ObjectMapper.Map<List<CodeTestCase>, List<CodeTestCaseDto>>(entities);
         }
 
         public async Task ReplaceForQuestionAsync(Guid questionId, List<CodeTestCaseDto> items)
         {
-            // Eski test-case'leri sil
+            if (questionId == Guid.Empty)
+                throw new UserFriendlyException("QuestionId boş olamaz.");
+
+            // 1) Eski test-case'leri sil
             var existing = await _repo.GetListAsync(x => x.QuestionId == questionId);
-            foreach (var e in existing)
+            if (existing.Any())
             {
-                await _repo.DeleteAsync(e, autoSave: true);
+                await _repo.DeleteManyAsync(existing, autoSave: true);
             }
 
-            // Yeni yoksa çık
-            if (items == null || items.Count == 0)
-            {
-                return;
-            }
-
-            // Yeni test-case'leri ekle
+            // 2) Yeni gelenleri ekle
             foreach (var dto in items)
             {
-                var entity = new CodeTestCase(
-                    id: GuidGenerator.Create(),
-                    questionId: questionId,
-                    input: dto.Input ?? string.Empty,
-                    expectedOutput: dto.ExpectedOutput ?? string.Empty,
-                    weight: dto.Weight <= 0 ? 1 : dto.Weight
-                );
+                // DTO -> Entity map
+                var entity = ObjectMapper.Map<CodeTestCaseDto, CodeTestCase>(dto);
+
+                // Soru ile ilişkilendir
+                entity.QuestionId = questionId;
+
+                // Id'yi burada elle set etmiyoruz; EF/ABP bunu halledecek
+                // (Guid default ise GuidGenerator/DB üzerinden üretilecek)
 
                 await _repo.InsertAsync(entity, autoSave: true);
             }

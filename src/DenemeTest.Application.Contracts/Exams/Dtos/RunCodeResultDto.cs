@@ -1,27 +1,34 @@
-﻿using Volo.Abp.Application.Dtos;
+﻿using System.Collections.Generic;
 
-namespace DenemeTest.Exams.Dtos;
-
-public class RunCodeResultDto : EntityDto
+namespace DenemeTest.Exams.Dtos
 {
-    /// <summary>
-    /// Çalıştırma başarılı mı? (Derleme/runtime hatası yoksa true)
-    /// </summary>
-    public bool Success { get; set; }
+    public class RunCodeResultDto
+    {
+        public bool Success { get; set; }
 
-    /// <summary>
-    /// Programın STDOUT çıktısı (Console.WriteLine vs.)
-    /// </summary>
-    public string Output { get; set; } = string.Empty;
+        public int ExitCode { get; set; }
 
-    /// <summary>
-    /// Hata mesajı (derleme veya runtime).
-    /// </summary>
-    public string? Error { get; set; }
+        /// <summary>
+        /// Tüm test case sonuçları.
+        /// </summary>
+        public List<TestCaseResultDto> TestCases { get; set; } = new();
 
-    /// <summary>
-    /// Process exit code (0 = başarılı).
-    /// Şimdilik stub için 0 veya 1 gönderiyoruz.
-    /// </summary>
-    public int ExitCode { get; set; }
+        /// <summary>
+        /// Geçen (doğru çalışan) test-case sayısı.
+        /// </summary>
+        public int PassedCount { get; set; }
+
+        /// <summary>
+        /// Toplam test-case sayısı.
+        /// </summary>
+        public int TotalCount { get; set; }
+
+        /// <summary>
+        /// Eski UI ile uyumluluk için özet çıktı metni.
+        /// Örn: "3/4 test geçti" veya her test için kısa satırlar.
+        /// </summary>
+        public string? Output { get; set; }
+
+        public string? Error { get; set; }
+    }
 }

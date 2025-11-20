@@ -142,20 +142,20 @@ else
                                             <p class="text-muted">Bu soru için henüz test-case tanımlanmamış.</p>
                                         }
 
-                                        @for (int i = 0; i < _codeCases.Count; i++)
+                                        @foreach (var caseModel in _codeCases)
                                         {
                                             <div class="border rounded p-2 mb-2">
                                                 <div class="mb-2">
                                                     <label class="form-label">Input</label>
                                                     <textarea class="form-control"
                                                               rows="2"
-                                                              @bind="_codeCases[i].Input"></textarea>
+                                                              @bind="caseModel.Input"></textarea>
                                                 </div>
                                                 <div class="mb-2">
                                                     <label class="form-label">Beklenen Çıktı</label>
                                                     <textarea class="form-control"
                                                               rows="2"
-                                                              @bind="_codeCases[i].ExpectedOutput"></textarea>
+                                                              @bind="caseModel.ExpectedOutput"></textarea>
                                                 </div>
                                                 <div class="d-flex align-items-center gap-2">
                                                     <div>
@@ -163,12 +163,12 @@ else
                                                         <input type="number"
                                                                class="form-control"
                                                                style="max-width: 120px"
-                                                               @bind="_codeCases[i].Weight"
+                                                               @bind="caseModel.Weight"
                                                                min="1" />
                                                     </div>
                                                     <button type="button"
                                                             class="btn btn-outline-danger ms-auto"
-                                                            @onclick="(() => RemoveCodeCase(i))">
+                                                            @onclick="(() => RemoveCodeCase(caseModel))">
                                                         Sil
                                                     </button>
                                                 </div>
@@ -340,11 +340,11 @@ else
         });
     }
 
-    private void RemoveCodeCase(int index)
+    private void RemoveCodeCase(CodeTestCaseDto dto)
     {
-        if (index >= 0 && index < _codeCases.Count)
+        if (dto is not null && _codeCases.Contains(dto))
         {
-            _codeCases.RemoveAt(index);
+            _codeCases.Remove(dto);
         }
     }
 

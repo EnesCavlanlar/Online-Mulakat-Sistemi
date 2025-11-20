@@ -20,14 +20,18 @@ namespace DenemeTest;
     typeof(AbpAccountApplicationModule),
     typeof(AbpTenantManagementApplicationModule),
     typeof(AbpSettingManagementApplicationModule)
-    )]
+)]
 public class DenemeTestApplicationModule : AbpModule
 {
     public override void ConfigureServices(ServiceConfigurationContext context)
     {
-        context.Services.AddTransient<IClassicScoringProvider, ClassicScoringStub>();
-        context.Services.AddTransient<IClassicScoringProvider, ClassicScoringStub>();
+        var services = context.Services;
 
+        // Klasik soru puanlama provider’ı (şimdilik stub)
+        services.AddTransient<IClassicScoringProvider, ClassicScoringStub>();
+
+        // Coding sorular için Roslyn tabanlı code runner
+        services.AddTransient<ICodeRunner, RoslynCodeRunner>();
 
         Configure<AbpAutoMapperOptions>(options =>
         {

@@ -1,26 +1,36 @@
 ﻿using System;
-using Volo.Abp.Application.Dtos;
 
-namespace DenemeTest.Exams.Dtos;
-
-public class RunCodeRequestDto : EntityDto<Guid>
+namespace DenemeTest.Exams.Dtos
 {
-    public Guid SessionId { get; set; }
-    public Guid QuestionId { get; set; }
-
     /// <summary>
-    /// Kullanıcının yazdığı kod.
+    /// Kod çalıştırma isteği DTO'su.
     /// </summary>
-    public string Code { get; set; } = string.Empty;
+    public class RunCodeRequestDto
+    {
+        /// <summary>
+        /// Oturum (session) id'si – loglama vs. için.
+        /// </summary>
+        public Guid SessionId { get; set; }
 
-    /// <summary>
-    /// "csharp", "python" vs. Şimdilik hep "csharp" göndereceğiz.
-    /// </summary>
-    public string Language { get; set; } = "csharp";
+        /// <summary>
+        /// İlgili soru Id'si.
+        /// </summary>
+        public Guid QuestionId { get; set; }
 
-    /// <summary>
-    /// Test-case input’u. Sınav sırasında otomatik puanlama için kullanılıyor.
-    /// Kodu manuel çalıştırırken (Kodu Çalıştır butonu) genelde null olacak.
-    /// </summary>
-    public string? Input { get; set; }
+        /// <summary>
+        /// Kullanıcının yazdığı kod.
+        /// </summary>
+        public string Code { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Programlama dili (şimdilik "csharp").
+        /// </summary>
+        public string Language { get; set; } = "csharp";
+
+        /// <summary>
+        /// Bu çalıştırma için kullanılacak input (STDIN).
+        /// Coding soru puanlamasında her test-case için ayrı input gönderiliyor.
+        /// </summary>
+        public string? Input { get; set; }
+    }
 }
