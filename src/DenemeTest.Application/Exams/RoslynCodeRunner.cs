@@ -1,136 +1,129 @@
-﻿using Microsoft.CodeAnalysis.CSharp.Scripting;
+﻿using DenemeTest.Application.Exams;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp.Scripting;
 using Microsoft.CodeAnalysis.Scripting;
 using System;
 using System.IO;
 using System.Linq;
-using System.Threading;
+using System.Text;
 using System.Threading.Tasks;
 
-namespace DenemeTest.Application.Exams
+namespace DenemeTest.Exams
 {
-    /// <summary>
-    /// Roslyn tabanlı, in-process C# kod çalıştırıcı.
-    /// 
-    /// ÖNEMLİ:
-    /// - Şu an için güvenlik açısından tam izole bir sandbox değildir.
-    /// - Aynı process içinde kodu derleyip çalıştırır.
-    /// - İleride Docker içinde çalışan gerçek sandbox ile değiştirilebilir.
-    /// </summary>
     public class RoslynCodeRunner : ICodeRunner
     {
         public async Task<CodeRunnerResult> RunAsync(CodeRunnerInput input)
         {
-            var result = new CodeRunnerResult();
-
-            if (string.IsNullOrWhiteSpace(input.Code))
-            {
-                result.ExitCode = 1;
-                result.Error = "Çalıştırılacak kod boş.";
-                return result;
-            }
-
-            // Şimdilik sadece C# destekleniyor
+            // Şimdilik sadece C# destekliyoruz
             var lang = (input.Language ?? "csharp").ToLowerInvariant();
             if (lang is not ("csharp" or "cs"))
             {
-                result.ExitCode = 1;
-                result.Error = $"Şu an sadece C# destekleniyor. Gönderilen dil: {input.Language}";
-                return result;
+                return new CodeRunnerResult
+                {
+                    ExitCode = 1,
+                    Error = $"Şu an sadece C# destekleniyor. Gönderilen dil: {input.Language}"
+                };
             }
 
-            // Console IO yönlendirme
+            var options = ScriptOptions.Default
+                .AddReferences(
+                    typeof(object).Assembly,
+                    typeof(Enumerable).Assembly
+                )
+                .AddImports(
+                    "System",
+                    "System.Linq",
+                    "System.Collections.Generic"
+                );
+
+            var sbOutput = new StringBuilder();
             var originalOut = Console.Out;
-            var originalErr = Console.Error;
-            var originalIn = Console.In;
-
-            using var outWriter = new StringWriter();
-            using var errWriter = new StringWriter();
-            using var inReader = new StringReader(input.InputText ?? string.Empty);
-
-            Console.SetOut(outWriter);
-            Console.SetError(errWriter);
-            Console.SetIn(inReader);
-
-            string? errorMessage = null;
 
             try
             {
-                var cts = new CancellationTokenSource(
-                    input.TimeoutMilliseconds > 0 ? input.TimeoutMilliseconds : 3000);
+                using var writer = new StringWriter(sbOutput);
+                Console.SetOut(writer);
 
-                // Script seçenekleri: temel .NET referansları + sık kullanılan namespace'ler
-                var scriptOptions = ScriptOptions.Default
-                    .WithImports(
-                        "System",
-                        "System.Linq",
-                        "System.Collections.Generic"
-                    )
-                    .WithReferences(
-                        typeof(object).Assembly,
-                        typeof(Enumerable).Assembly
-                    );
+                // Önce compile edip hata var mı bakıyoruz
+                var script = CSharpScript.Create(input.Code ?? string.Empty, options);
+                var compilation = script.GetCompilation();
+                var diagnostics = compilation.GetDiagnostics()
+                    .Where(d => d.Severity == DiagnosticSeverity.Error)
+                    .ToList();
 
-                try
+                if (diagnostics.Any())
                 {
-                    // Kullanıcının kodunu script olarak çalıştırıyoruz
-                    await CSharpScript.RunAsync(
-                        input.Code,
-                        scriptOptions,
-                        cancellationToken: cts.Token
-                    );
+                    var err = new StringBuilder();
+                    err.AppendLine("Derleme hataları:");
 
-                    result.ExitCode = 0;
-                }
-                catch (OperationCanceledException)
-                {
-                    result.ExitCode = -1;
-                    errorMessage = "Kod çalıştırma zaman aşımına uğradı.";
-                }
-                catch (CompilationErrorException ex)
-                {
-                    result.ExitCode = 1;
-                    errorMessage = "Derleme hatası:\n" + string.Join(Environment.NewLine, ex.Diagnostics);
-                }
-                catch (Exception ex)
-                {
-                    result.ExitCode = 1;
-                    errorMessage = "Çalışma zamanı hatası:\n" + ex;
+                    foreach (var d in diagnostics)
+                    {
+                        var span = d.Location.GetLineSpan();
+                        var line = span.StartLinePosition.Line + 1;
+                        var col = span.StartLinePosition.Character + 1;
+                        err.AppendLine($"Satır {line}, Sütun {col}: {d.GetMessage()}");
+                    }
+
+                    return new CodeRunnerResult
+                    {
+                        ExitCode = 1,
+                        Error = err.ToString()
+                    };
                 }
 
-                // STDOUT / STDERR toplanıyor
-                var stdOut = outWriter.ToString();
-                var stdErr = errWriter.ToString();
+                // Compile temiz → script'i çalıştır
+                var state = await script.RunAsync();
 
-                result.Output = string.IsNullOrWhiteSpace(stdOut) ? null : stdOut;
-                result.Error = BuildErrorText(errorMessage, stdErr);
+                // Runtime exception varsa yakala
+                if (state.Exception != null)
+                {
+                    var ex = state.Exception;
+                    var msg = $"Çalışma zamanı hatası: {ex.GetType().Name} - {ex.Message}";
+                    return new CodeRunnerResult
+                    {
+                        ExitCode = 1,
+                        Output = sbOutput.ToString(),
+                        Error = msg
+                    };
+                }
+
+                return new CodeRunnerResult
+                {
+                    ExitCode = 0,
+                    Output = sbOutput.ToString(),
+                    Error = null
+                };
+            }
+            catch (CompilationErrorException cex)
+            {
+                var err = new StringBuilder();
+                err.AppendLine("Derleme hataları:");
+                foreach (var d in cex.Diagnostics)
+                {
+                    var span = d.Location.GetLineSpan();
+                    var line = span.StartLinePosition.Line + 1;
+                    var col = span.StartLinePosition.Character + 1;
+                    err.AppendLine($"Satır {line}, Sütun {col}: {d.GetMessage()}");
+                }
+
+                return new CodeRunnerResult
+                {
+                    ExitCode = 1,
+                    Error = err.ToString()
+                };
+            }
+            catch (Exception ex)
+            {
+                return new CodeRunnerResult
+                {
+                    ExitCode = 1,
+                    Error = $"Beklenmeyen hata: {ex.GetType().Name} - {ex.Message}"
+                };
             }
             finally
             {
-                // Console IO'yu eski haline getir
                 Console.SetOut(originalOut);
-                Console.SetError(originalErr);
-                Console.SetIn(originalIn);
             }
-
-            return result;
-        }
-
-        private static string? BuildErrorText(string? mainError, string? stderr)
-        {
-            var hasMain = !string.IsNullOrWhiteSpace(mainError);
-            var hasStdErr = !string.IsNullOrWhiteSpace(stderr);
-
-            if (!hasMain && !hasStdErr)
-                return null;
-
-            if (hasMain && !hasStdErr)
-                return mainError;
-
-            if (!hasMain && hasStdErr)
-                return stderr;
-
-            // İkisi de varsa alt alta birleştir
-            return mainError + Environment.NewLine + stderr;
         }
     }
 }

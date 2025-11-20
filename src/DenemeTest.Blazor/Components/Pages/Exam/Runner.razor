@@ -189,7 +189,16 @@ else
                 foreach (var q in _test.Questions)
                 {
                     _selected[q.Id] = new HashSet<Guid>();
-                    _texts[q.Id] = null;
+
+                    if (q.Type == QT.Coding)
+                    {
+                        // Coding sorular için temel kod iskeleti
+                        _texts[q.Id] = GetDefaultCodeTemplate();
+                    }
+                    else
+                    {
+                        _texts[q.Id] = null;
+                    }
                 }
             }
         }
@@ -246,6 +255,19 @@ else
     {
         _texts[questionId] = text;
     }
+
+    // ---------- Varsayılan C# şablonu ----------
+
+    private string GetDefaultCodeTemplate() =>
+@"using System;
+
+public class Program
+{
+    public static void Main()
+    {
+        // Kodunuzu buraya yazın.
+    }
+}";
 
     // ---------- Navigation ----------
 

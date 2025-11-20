@@ -108,12 +108,19 @@ else
                                         <span class="input-group-text">
                                             <input class="form-check-input mt-0" type="checkbox" @bind="_form.Options[i].IsCorrect" />
                                         </span>
-                                        <input class="form-control" placeholder="Seçenek metni"
+                                        <input class="form-control"
+                                               placeholder="Seçenek metni"
                                                @bind="_form.Options[i].Text" />
-                                        <button class="btn btn-outline-danger" type="button" @onclick="(() => RemoveOption(i))">Sil</button>
+                                        <button class="btn btn-outline-danger"
+                                                type="button"
+                                                @onclick="(() => RemoveOption(i))">
+                                            Sil
+                                        </button>
                                     </div>
                                 }
-                                <button class="btn btn-sm btn-outline-primary" type="button" @onclick="AddOption">Seçenek Ekle</button>
+                                <button class="btn btn-sm btn-outline-primary" type="button" @onclick="AddOption">
+                                    Seçenek Ekle
+                                </button>
                             </div>
                         }
 
@@ -175,17 +182,29 @@ else
                                             </div>
                                         }
 
-                                        <div class="d-flex gap-2">
-                                            <button type="button"
-                                                    class="btn btn-sm btn-outline-primary"
-                                                    @onclick="AddCodeCase">
-                                                Test Case Ekle
-                                            </button>
-                                            <button type="button"
-                                                    class="btn btn-sm btn-success"
-                                                    @onclick="SaveCodeCasesAsync">
-                                                Test Case'leri Kaydet
-                                            </button>
+                                        <div class="d-flex flex-column gap-2">
+                                            <div class="d-flex gap-2">
+                                                <button type="button"
+                                                        class="btn btn-sm btn-outline-primary"
+                                                        @onclick="AddCodeCase">
+                                                    Test Case Ekle
+                                                </button>
+                                                <button type="button"
+                                                        class="btn btn-sm btn-success"
+                                                        @onclick="SaveCodeCasesAsync">
+                                                    Test Case'leri Kaydet
+                                                </button>
+                                            </div>
+
+                                            @* Kaydetme bildirimleri *@
+                                            @if (!string.IsNullOrEmpty(_codeCasesInfo))
+                                            {
+                                                <span class="text-success small">@_codeCasesInfo</span>
+                                            }
+                                            @if (!string.IsNullOrEmpty(_codeCasesError))
+                                            {
+                                                <span class="text-danger small">@_codeCasesError</span>
+                                            }
                                         </div>
                                     }
                                 }
@@ -215,6 +234,10 @@ else
     // Coding test case state
     private List<CodeTestCaseDto> _codeCases = new();
     private bool _loadingCodeCases = false;
+
+    // Test-case bildirimleri
+    private string? _codeCasesInfo;
+    private string? _codeCasesError;
 
     protected override async Task OnInitializedAsync()
     {
@@ -261,6 +284,9 @@ else
         if (_tests.Count > 0) _form.TestId = _tests[0].Id;
 
         _codeCases = new List<CodeTestCaseDto>();
+        _codeCasesInfo = null;
+        _codeCasesError = null;
+
         _showModal = true;
     }
 
@@ -273,11 +299,18 @@ else
             Type = dto.Type, // zaten DTO enum
             Text = dto.Text,
             Points = dto.Points,
-            Options = dto.Options?.Select(o => new CreateUpdateQuestionOptionDto { Text = o.Text, IsCorrect = o.IsCorrect }).ToList()
+            Options = dto.Options?.Select(o => new CreateUpdateQuestionOptionDto
+            {
+                Text = o.Text,
+                IsCorrect = o.IsCorrect
+            }).ToList()
                       ?? new List<CreateUpdateQuestionOptionDto>()
         };
 
         _codeCases = new List<CodeTestCaseDto>();
+        _codeCasesInfo = null;
+        _codeCasesError = null;
+
         _showModal = true;
 
         if (_form.Type == QT.Coding)
@@ -310,6 +343,10 @@ else
             await QuestionApp.UpdateAsync(_editId.Value, _form);
 
         _showModal = false;
+        _codeCases = new List<CodeTestCaseDto>();
+        _codeCasesInfo = null;
+        _codeCasesError = null;
+
         await LoadData();
         StateHasChanged();
     }
@@ -318,9 +355,12 @@ else
     {
         _showModal = false;
         _codeCases = new List<CodeTestCaseDto>();
+        _codeCasesInfo = null;
+        _codeCasesError = null;
     }
 
-    private void AddOption() => _form.Options.Add(new CreateUpdateQuestionOptionDto { Text = "", IsCorrect = false });
+    private void AddOption()
+        => _form.Options.Add(new CreateUpdateQuestionOptionDto { Text = "", IsCorrect = false });
 
     private void RemoveOption(int i)
     {
@@ -330,6 +370,9 @@ else
     private void AddCodeCase()
     {
         if (_editId == null) return;
+
+        _codeCasesInfo = null;
+        _codeCasesError = null;
 
         _codeCases.Add(new CodeTestCaseDto
         {
@@ -350,9 +393,28 @@ else
 
     private async Task SaveCodeCasesAsync()
     {
-        if (_editId == null) return;
-        await CodeTestCaseApp.ReplaceForQuestionAsync(_editId.Value, _codeCases);
-        await LoadCodeCasesAsync(_editId.Value);
+        _codeCasesInfo = null;
+        _codeCasesError = null;
+
+        if (_editId == null)
+        {
+            _codeCasesError = "Test-case kaydetmek için önce soruyu kaydetmelisin.";
+            StateHasChanged();
+            return;
+        }
+
+        try
+        {
+            await CodeTestCaseApp.ReplaceForQuestionAsync(_editId.Value, _codeCases);
+            await LoadCodeCasesAsync(_editId.Value);
+            _codeCasesInfo = "Test-case'ler başarıyla kaydedildi.";
+        }
+        catch (Exception ex)
+        {
+            _codeCasesError = "Test-case kaydedilirken hata oluştu: " + ex.Message;
+        }
+
+        StateHasChanged();
     }
 
     // basit confirm (şimdilik true döndürüyoruz)
