@@ -28,7 +28,7 @@
 </h3>
 
 <div class="alert alert-warning">
-    Sekme değiştirir veya odak kaybı yaşarsan sınavın iptal edilebilir. Lütfen bu pencereden ayrılma.
+    Sekme değiştirir, odak kaybedersen veya Alt+Tab yaparsan sınavın anında iptal edilir. Lütfen bu pencereden ayrılma.
 </div>
 
 @if (!string.IsNullOrWhiteSpace(_error))
@@ -181,22 +181,19 @@ else
     private bool _saving;
     private bool _finished;
     private bool _finishedByTimeout;
+    private bool _autoCancelled; // proctor tarafından iptal edildi mi?
     private int _finalScore;
     private string? _error;
 
-    // MCQ & text cevap state
     private readonly Dictionary<Guid, HashSet<Guid>> _selected = new();
     private readonly Dictionary<Guid, string?> _texts = new();
 
-    // Coding run state
     private bool _runningCode;
     private string? _runOutput;
     private string? _runError;
 
-    // Proctor JS ref (NOT: iç sınıf tanımlama yok!)
     private DotNetObjectReference<Runner>? _dotNetRef;
 
-    // Geri sayım
     private int _remainingSeconds = 0;
     private System.Timers.Timer? _timer;
 
@@ -221,15 +218,10 @@ else
                 foreach (var q in _test.Questions)
                 {
                     _selected[q.Id] = new HashSet<Guid>();
-
-                    if (q.Type == QT.Coding)
-                        _texts[q.Id] = GetDefaultCodeTemplate();
-                    else
-                        _texts[q.Id] = null;
+                    _texts[q.Id] = q.Type == QT.Coding ? GetDefaultCodeTemplate() : null;
                 }
             }
 
-            // Süre bilgisi varsa geri sayımı başlat
             if (_test != null && _test.DurationMinutes > 0)
             {
                 _remainingSeconds = _test.DurationMinutes * 60;
@@ -247,29 +239,16 @@ else
         if (!firstRender || _test == null)
             return;
 
-        // DotNetObjectReference oluştur
         _dotNetRef ??= DotNetObjectReference.Create(this);
 
-        // Proctor init (focus/blur vs.)
         await SafeInvokeVoidAsync("examProctor.init", _dotNetRef, SessionId.ToString());
-
-        // Kamera + ses (ve istenirse ekran) kaydını başlat
         await SafeInvokeVoidAsync("examRecorder.start", SessionId.ToString(), 2000, true);
     }
 
     private async Task SafeInvokeVoidAsync(string identifier, params object[] args)
     {
-        try
-        {
-            await JS.InvokeVoidAsync(identifier, args);
-        }
-        catch
-        {
-            // JS yoksa sessiz geç
-        }
+        try { await JS.InvokeVoidAsync(identifier, args); } catch { }
     }
-
-    // ---------- cevap state helpers ----------
 
     private bool IsOptionSelected(Guid questionId, Guid optionId)
         => _selected.TryGetValue(questionId, out var set) && set.Contains(optionId);
@@ -281,9 +260,7 @@ else
             set = new HashSet<Guid>();
             _selected[questionId] = set;
         }
-
-        if (selected) set.Add(optionId);
-        else set.Remove(optionId);
+        if (selected) set.Add(optionId); else set.Remove(optionId);
     }
 
     private string GetTextAnswer(Guid questionId)
@@ -302,117 +279,71 @@ public class Program
     }
 }";
 
-    // ---------- Navigation ----------
-
     private async Task PrevQuestion()
     {
         await SaveCurrentAsync();
-        if (_currentIndex > 0)
-        {
-            _currentIndex--;
-            ResetRunState();
-        }
+        if (_currentIndex > 0) { _currentIndex--; ResetRunState(); }
     }
 
     private async Task NextQuestion()
     {
         await SaveCurrentAsync();
-        if (_test != null && _currentIndex < _test.Questions.Count - 1)
-        {
-            _currentIndex++;
-            ResetRunState();
-        }
+        if (_test != null && _currentIndex < _test.Questions.Count - 1) { _currentIndex++; ResetRunState(); }
     }
 
-    private void ResetRunState()
-    {
-        _runOutput = null;
-        _runError = null;
-    }
-
-    // ---------- Coding: kod çalıştırma ----------
+    private void ResetRunState() { _runOutput = null; _runError = null; }
 
     private async Task RunCurrentCode()
     {
-        if (_test == null || CurrentQuestion == null || CurrentQuestion.Type != QT.Coding)
-            return;
+        if (_test == null || CurrentQuestion == null || CurrentQuestion.Type != QT.Coding) return;
 
-        _runningCode = true;
-        _runOutput = null;
-        _runError = null;
-        StateHasChanged();
-
+        _runningCode = true; _runOutput = null; _runError = null; StateHasChanged();
         try
         {
-            var code = GetTextAnswer(CurrentQuestion.Id);
-
             var req = new RunCodeRequestDto
             {
                 SessionId = SessionId,
                 QuestionId = CurrentQuestion.Id,
-                Code = code,
+                Code = GetTextAnswer(CurrentQuestion.Id),
                 Language = "csharp"
             };
-
             var res = await CodeExecApp.RunAsync(req);
-
-            _runOutput = res.Output;
-            _runError = res.Error;
+            _runOutput = res.Output; _runError = res.Error;
         }
         catch (Exception ex) { _runError = ex.Message; }
-        finally
-        {
-            _runningCode = false;
-            StateHasChanged();
-        }
+        finally { _runningCode = false; StateHasChanged(); }
     }
-
-    // ---------- Cevap kaydetme & sınav bitirme ----------
 
     private async Task SaveCurrentAsync()
     {
-        if (_test == null || CurrentQuestion == null)
-            return;
+        if (_test == null || CurrentQuestion == null) return;
 
-        _saving = true;
-        StateHasChanged();
-
+        _saving = true; StateHasChanged();
         try
         {
             var q = CurrentQuestion;
+            Guid[]? selectedIds = null; string? textAnswer = null;
 
-            Guid[]? selectedIds = null;
-            string? textAnswer = null;
+            if (q.Type == QT.MultipleChoice) selectedIds = _selected[q.Id].ToArray();
+            else if (q.Type is QT.Classic or QT.Coding) textAnswer = GetTextAnswer(q.Id);
 
-            if (q.Type == QT.MultipleChoice)
-                selectedIds = _selected[q.Id].ToArray();
-            else if (q.Type is QT.Classic or QT.Coding)
-                textAnswer = GetTextAnswer(q.Id);
-
-            var dto = new SubmitAnswerDto
+            await RunApp.SubmitAnswerAsync(new SubmitAnswerDto
             {
                 SessionId = SessionId,
                 QuestionId = q.Id,
                 SelectedOptionIds = selectedIds,
                 TextAnswer = textAnswer
-            };
-
-            await RunApp.SubmitAnswerAsync(dto);
+            });
         }
         catch (Exception ex) { _error = ex.Message; }
-        finally
-        {
-            _saving = false;
-            StateHasChanged();
-        }
+        finally { _saving = false; StateHasChanged(); }
     }
 
     private Task FinishExam() => FinishExamInternal(false);
 
     private async Task FinishExamInternal(bool auto)
     {
-        if (_finished || _test == null)
-            return;
+        if (_finished || _test == null || _autoCancelled) return;
 
         try
         {
@@ -425,18 +356,13 @@ public class Program
             _finalScore = score;
 
             _finishedByTimeout = auto;
-            var note = auto
-                ? "Süre dolduğu için otomatik tamamlandı."
-                : "Runner'dan kullanıcı tarafından tamamlandı.";
+            var note = auto ? "Süre dolduğu için otomatik tamamlandı."
+                            : "Runner'dan kullanıcı tarafından tamamlandı.";
 
             await SessionApp.FinishAsync(SessionId, score, note);
-
             _finished = true;
 
-            // 1) Kaydı durdur → finalize tetiklenecek
             await SafeInvokeVoidAsync("examRecorder.stop", SessionId.ToString());
-
-            // 2) Pencereyi kapatmayı dene; kapanmazsa redirect (ExamLayout'ta fallback var)
             await JS.InvokeVoidAsync("examRunner.closeWindow");
         }
         catch (Exception ex) { _error = ex.Message; }
@@ -444,13 +370,19 @@ public class Program
 
     private async Task CancelExam()
     {
+        await CancelInternal("Kullanıcı iptal etti.");
+    }
+
+    private async Task CancelInternal(string reason)
+    {
         try
         {
+            _autoCancelled = true;
             _timer?.Stop();
             _remainingSeconds = 0;
 
-            await SessionApp.CancelAsync(SessionId, "Kullanıcı iptal etti.");
             await SafeInvokeVoidAsync("examRecorder.cancel", SessionId.ToString());
+            await SessionApp.CancelAsync(SessionId, reason);
             await JS.InvokeVoidAsync("examRunner.closeWindow");
         }
         catch (Exception ex) { _error = ex.Message; }
@@ -461,14 +393,23 @@ public class Program
         try
         {
             await SafeInvokeVoidAsync("examRecorder.stop", SessionId.ToString());
-            await SafeInvokeVoidAsync("examProctor.dispose", SessionId.ToString());
+            await SafeInvokeVoidAsync("examProctor.dispose");
         }
-        catch { /* no-op */ }
+        catch { }
 
         _timer?.Dispose();
         _dotNetRef?.Dispose();
     }
 
+    // JS -> .NET : Sekme değişimi / blur / Alt+Tab yakalandığında çağrılır
+    [JSInvokable]
+    public async Task FocusLostAutoCancel(string? detail)
+    {
+        if (_finished || _autoCancelled) return;
+        await InvokeAsync(() => CancelInternal("Odak kaybı / sekme değişimi tespit edildi: " + (detail ?? "-")));
+    }
+
+    // (İsterseniz log amaçlı tutmaya devam)
     [JSInvokable]
     public async Task ReportFocusLost(string? detail)
     {
@@ -476,21 +417,14 @@ public class Program
         catch { }
     }
 
-    // ---------- Timer ----------
-
     private void StartTimer()
     {
-        if (_remainingSeconds <= 0)
-            return;
+        if (_remainingSeconds <= 0) return;
 
         _timer = new System.Timers.Timer(1000);
         _timer.Elapsed += (_, __) =>
         {
-            if (_finished)
-            {
-                _timer?.Stop();
-                return;
-            }
+            if (_finished || _autoCancelled) { _timer?.Stop(); return; }
 
             if (_remainingSeconds <= 0)
             {
