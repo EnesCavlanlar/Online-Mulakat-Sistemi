@@ -1,109 +1,139 @@
-﻿window.examRecorder = (function () {
-    let sessionId = null;
-    let camStream = null;
-    let screenStream = null;
-    let mixedStream = null;
+﻿// wwwroot/js/recorder.js
+// Ekran + kamera + ses -> MediaRecorder -> TUM BLOBLARI TARAYICIDA BIRIKTIR
+// Stop'ta TEK webm dosyası olarak sunucuya yükle (finalize-upload)
+
+window.examRecorder = (function () {
+    let mediaStream = null;
     let mediaRecorder = null;
-    let seq = 0;
-    let uploading = false;
+    let sessionId = null;
+    let buffers = [];
+    let options = {};
+    let recording = false;
 
-    async function start(sid, timesliceMs, withScreen) {
-        if (mediaRecorder) return;
-        sessionId = sid;
-        seq = 0;
-        uploading = false;
-
-        camStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-
-        if (withScreen) {
-            try {
-                // Ekran + (varsa) sistem sesi
-                screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
-            } catch (e) {
-                console.warn("DisplayMedia denied, fallback to camera only", e);
-                screenStream = null;
+    async function start(sessId, /*timesliceMs*/ _ignored, withScreen) {
+        try {
+            if (recording && sessionId === sessId && mediaRecorder && mediaRecorder.state === "recording") {
+                console.log("[recorder] already recording", sessId);
+                return;
             }
-        }
 
-        mixedStream = mergeStreams(screenStream, camStream);
+            await stopStreams();
+            sessionId = sessId;
+            buffers = [];
+            recording = false;
 
-        mediaRecorder = new MediaRecorder(mixedStream, { mimeType: 'video/webm;codecs=vp8,opus' });
-
-        mediaRecorder.ondataavailable = async (e) => {
-            if (!e.data || e.data.size === 0) return;
-            const chunk = await e.data.arrayBuffer();
-            await uploadChunk(new Uint8Array(chunk));
-        };
-
-        mediaRecorder.onstop = async () => {
-            try { await finalize(); } catch (e) { console.error("finalize error", e); }
-            cleanup();
-        };
-
-        mediaRecorder.start(timesliceMs || 2000); // 2 sn'lik parçalar
-    }
-
-    function mergeStreams(screen, cam) {
-        // öncelik ekran videosu; yoksa kamera videosu
-        const tracks = [];
-        if (screen && screen.getVideoTracks().length) tracks.push(screen.getVideoTracks()[0]);
-        else if (cam && cam.getVideoTracks().length) tracks.push(cam.getVideoTracks()[0]);
-
-        // ses: ekranın sesi varsa onu al, yoksa kameranın mikrofonu
-        if (screen && screen.getAudioTracks().length) tracks.push(screen.getAudioTracks()[0]);
-        else if (cam && cam.getAudioTracks().length) tracks.push(cam.getAudioTracks()[0]);
-
-        return new MediaStream(tracks);
-    }
-
-    async function uploadChunk(bytes) {
-        while (uploading) { await new Promise(r => setTimeout(r, 50)); }
-        uploading = true;
-
-        const url = `/api/recordings/chunk?sessionId=${encodeURIComponent(sessionId)}&seq=${seq++}`;
-        await fetch(url, {
-            method: 'POST',
-            body: bytes,
-            headers: { 'Content-Type': 'application/octet-stream' },
-            credentials: 'include'
-        }).catch(err => console.error('upload chunk error', err));
-
-        uploading = false;
-    }
-
-    async function stop() {
-        if (!mediaRecorder) return;
-        mediaRecorder.stop();
-    }
-
-    async function cancel() {
-        try {
-            await fetch(`/api/recordings/cancel?sessionId=${encodeURIComponent(sessionId)}`, {
-                method: 'POST',
-                credentials: 'include'
+            const tracks = [];
+            // Ekran
+            if (withScreen && navigator.mediaDevices.getDisplayMedia) {
+                try {
+                    const screen = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 25 }, audio: false });
+                    screen.getVideoTracks().forEach(t => tracks.push(t));
+                    console.log("[recorder] display media OK");
+                } catch (e) {
+                    console.warn("[recorder] display media failed, continue with camera only", e);
+                }
+            }
+            // Kamera + ses
+            const cam = await navigator.mediaDevices.getUserMedia({
+                video: true,
+                audio: { echoCancellation: true, noiseSuppression: true }
             });
-        } catch { }
-        cleanup();
+            cam.getTracks().forEach(t => tracks.push(t));
+
+            mediaStream = new MediaStream(tracks);
+
+            options = {};
+            if (MediaRecorder.isTypeSupported("video/webm;codecs=vp9")) options.mimeType = "video/webm;codecs=vp9";
+            else if (MediaRecorder.isTypeSupported("video/webm;codecs=vp8")) options.mimeType = "video/webm;codecs=vp8";
+            else options.mimeType = "video/webm";
+
+            mediaRecorder = new MediaRecorder(mediaStream, options);
+
+            mediaRecorder.ondataavailable = (e) => {
+                if (e && e.data && e.data.size > 0) {
+                    buffers.push(e.data);
+                }
+            };
+
+            mediaRecorder.onstart = () => {
+                recording = true;
+                console.log("[recorder] started", sessionId);
+            };
+
+            mediaRecorder.onerror = (e) => {
+                console.error("[recorder] error", e);
+            };
+
+            mediaRecorder.onstop = async () => {
+                try {
+                    const blob = new Blob(buffers, options);
+                    buffers = [];
+
+                    // Tek webm dosyasını bir seferde yükle
+                    const res = await fetch(`/api/recordings/finalize-upload?sessionId=${encodeURIComponent(sessionId)}&mime=video/webm`, {
+                        method: "POST",
+                        body: blob
+                    });
+                    if (!res.ok) {
+                        console.error("[recorder] finalize-upload failed", res.status);
+                    } else {
+                        console.log("[recorder] finalize-upload OK");
+                    }
+                } catch (err) {
+                    console.error("[recorder] finalize-upload error", err);
+                } finally {
+                    await stopStreams();
+                    mediaRecorder = null;
+                    sessionId = null;
+                    recording = false;
+                }
+            };
+
+            // DİKKAT: timeslice kullanmıyoruz -> valid tek webm dosyası oluşur
+            mediaRecorder.start();
+        } catch (err) {
+            console.error("[recorder] start error", err);
+        }
     }
 
-    async function finalize() {
-        await fetch(`/api/recordings/finalize?sessionId=${encodeURIComponent(sessionId)}&mime=${encodeURIComponent('video/webm')}`, {
-            method: 'POST',
-            credentials: 'include'
-        });
-    }
-
-    function cleanup() {
+    async function stop(sessId) {
         try {
-            if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
-        } catch { }
-        mediaRecorder = null;
+            if (mediaRecorder && mediaRecorder.state !== "inactive") {
+                mediaRecorder.stop();
+            } else {
+                // kayıt hiç başlamadıysa bile finalize-upload boş gönderme
+                await stopStreams();
+                mediaRecorder = null;
+                sessionId = null;
+                recording = false;
+            }
+        } catch (e) {
+            console.warn("[recorder] stop error", e);
+        }
+    }
 
-        [camStream, screenStream, mixedStream].forEach(s => {
-            if (!s) return;
-            s.getTracks().forEach(t => t.stop());
-        });
-        camStream = screenStream = mixedStream = null;
+    async function cancel(sessId) {
+        try {
+            if (mediaRecorder && mediaRecorder.state !== "inactive") {
+                mediaRecorder.stop();
+            }
+        } catch (e) {
+            console.warn("[recorder] stop on cancel error", e);
+        } finally {
+            // Sunucu tarafında geçici parçaları silmeye gerek yok (chunk yok artık)
+            await stopStreams();
+            mediaRecorder = null;
+            sessionId = null;
+            recording = false;
+            buffers = [];
+        }
+    }
+
+    async function stopStreams() {
+        if (mediaStream) {
+            mediaStream.getTracks().forEach(t => { try { t.stop(); } catch { } });
+            mediaStream = null;
+        }
     }
 
     return { start, stop, cancel };

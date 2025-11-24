@@ -7,7 +7,7 @@
 
 @implements IAsyncDisposable
 
-<h3>Sınav Girişi</h3>
+<h3 class="mb-3">Sınav Girişi</h3>
 
 @if (_error != null)
 {
@@ -15,29 +15,32 @@
 }
 else
 {
-    <ol class="mb-3">
-        <li>Kamera ve mikrofonuna izin ver.</li>
-        <li>Önizlemeyi görüyorsan <strong>Sınava Başla</strong> aktif olur.</li>
-    </ol>
+    <div class="alert alert-info">
+        Bu sayfaya girdiğinizde kamera + mikrofon izni istenir.
+        İzni vermeden sınava başlayamazsınız.
+    </div>
 
     <div class="card mb-3">
         <div class="card-body">
-            <div class="d-flex align-items-start gap-3 flex-wrap">
-                <div>
-                    <video id="previewVideo"
-                           width="320"
-                           height="240"
-                           class="border rounded"
-                           autoplay
-                           playsinline
-                           muted></video>
-                </div>
 
+            <div class="d-flex align-items-start gap-4 flex-wrap">
+
+                <!-- Video Preview -->
+                <video id="previewVideo"
+                       width="320"
+                       height="240"
+                       class="border rounded bg-dark"
+                       autoplay
+                       playsinline
+                       muted></video>
+
+                <!-- Control Panel -->
                 <div class="d-flex flex-column gap-2">
+
                     <button class="btn btn-outline-primary"
                             @onclick="RequestPermission"
-                            disabled="@(_requesting || _granted)">
-                        @(_granted ? "Kamera/Mikrofon Açık" : "Kamera/Mikrofon İzni Ver")
+                            disabled="@_requesting">
+                        @(_granted ? "Kamera/Mikrofon Açık (Tekrar Dene)" : "Kamera/Mikrofon İzni Tekrar İste")
                     </button>
 
                     <div>
@@ -49,10 +52,12 @@ else
                     </div>
 
                     <small class="text-muted">
-                        Tarayıcın izin diyalogu göstermediyse sayfayı yenilemeyi dene.
+                        Tarayıcı izin penceresi görünmezse butona tekrar basabilir veya sayfayı yenileyebilirsiniz.
                     </small>
+
                 </div>
             </div>
+
         </div>
     </div>
 
@@ -70,25 +75,43 @@ else
     private bool _granted;
     private bool _requesting;
     private bool _starting;
+    private bool _permissionRequestedOnce;
     private string _statusText = "Bekleniyor";
+
+    // Sayfa ilk render olduğunda otomatik izin iste
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && !_permissionRequestedOnce)
+        {
+            _permissionRequestedOnce = true;
+            await RequestPermission();
+        }
+    }
 
     private async Task RequestPermission()
     {
+        if (_requesting) return;
+
         _requesting = true;
         _statusText = "İzin isteniyor...";
         StateHasChanged();
 
-        // JS: mediaGate.request(videoElementId, statusElementId)
-        var ok = await JS.InvokeAsync<bool>(
-            "mediaGate.request",
-            "previewVideo",
-            "statusText"
-        );
-
-        _granted = ok;
-        if (!ok)
+        try
         {
-            _statusText = "İzin alınamadı!";
+            // JS: mediaGate.request(videoElementId, statusElementId)
+            var ok = await JS.InvokeAsync<bool>(
+                "mediaGate.request",
+                "previewVideo",
+                "statusText"
+            );
+
+            _granted = ok;
+            _statusText = ok ? "İzin verildi, kamera açık." : "İzin alınamadı!";
+        }
+        catch
+        {
+            _granted = false;
+            _statusText = "JS hatası, konsolu kontrol edin.";
         }
 
         _requesting = false;
@@ -97,6 +120,7 @@ else
 
     private async Task StartExam()
     {
+        // Güvenlik için ekstra kontrol: izin yoksa hiçbir şey yapma
         if (!_granted) return;
 
         try
@@ -109,7 +133,7 @@ else
         }
         catch (Exception ex)
         {
-            _error = ex.Message;
+            _error = "Geçersiz veya süresi dolmuş sınav bağlantısı! " + ex.Message;
             _starting = false;
         }
     }
@@ -118,12 +142,11 @@ else
     {
         try
         {
-            // JS: mediaGate.stop(videoElementId, statusElementId)
             await JS.InvokeVoidAsync("mediaGate.stop", "previewVideo", "statusText");
         }
         catch
         {
-            // önemli değil, sayfa kapanırken hata yutulabilir
+            // önemli değil
         }
     }
 }

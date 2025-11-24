@@ -1,28 +1,21 @@
-﻿using System.Threading.Tasks;
-using Microsoft.AspNetCore.Mvc;
-using DenemeTest.Application.Exams; // IExamSessionAppService buradan geliyor
+﻿using Microsoft.AspNetCore.Mvc;
 
 namespace DenemeTest.Controllers
 {
     [Route("api/exam/start")]
     public class ExamStartController : Controller
     {
-        private readonly IExamSessionAppService _sessionApp;
-
-        public ExamStartController(IExamSessionAppService sessionApp)
-        {
-            _sessionApp = sessionApp;
-        }
-
         // GET /api/exam/start/{token}
+        // Eskiden: doğrudan /exam/runner/{sessionId} adresine yönlendiriyordu,
+        // bu da kamera/mikrofon izin ekranını tamamen baypas ediyordu.
+        //
+        // Artık her zaman Blazor pre-exam sayfasına gidiyoruz:
+        //   /exam/start/{token}
+        // Böylece aday önce kamera+mikrofon izni veriyor, sonra soruları görüyor.
         [HttpGet("{token}")]
-        public async Task<IActionResult> StartByToken(string token)
+        public IActionResult StartByToken(string token)
         {
-            // mevcut servisi kullanıyoruz
-            var result = await _sessionApp.StartByTokenAsync(token);
-
-            // result.Id = ExamSession Id
-            return Redirect($"/exam/runner/{result.Id}");
+            return Redirect($"/exam/start/{token}");
         }
     }
 }

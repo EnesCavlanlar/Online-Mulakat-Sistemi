@@ -6,75 +6,58 @@ using System.IO;
 using System.Threading.Tasks;
 using Volo.Abp.BlobStoring;
 
-namespace DenemeTest.Blazor.Controllers;
-
-[Route("api/recordings")]
-[ApiController]
-public class RecordingController : ControllerBase
+namespace DenemeTest.Blazor.Controllers
 {
-    private readonly IBlobContainer<ExamRecordingContainer> _recordings;
-    private readonly IConfiguration _config;
-
-    public RecordingController(
-        IBlobContainer<ExamRecordingContainer> recordings,
-        IConfiguration config)
+    [Route("api/recordings")]
+    [ApiController]
+    [IgnoreAntiforgeryToken]
+    public class RecordingController : ControllerBase
     {
-        _recordings = recordings;
-        _config = config;
-    }
+        private readonly IBlobContainer<ExamRecordingContainer> _recordings;
+        private readonly IConfiguration _config;
 
-    // ... sende zaten olan chunk upload aksiyonlarını aynen bırak ...
-
-    [HttpPost("finalize")]
-    public async Task<IActionResult> FinalizeAsync([FromForm] Guid sessionId)
-    {
-        // Geçici klasör: appsettings.Exam.RecordingTemp
-        var tempRoot = _config["Exam:RecordingTemp"] ?? "App_Data/recordings_tmp";
-        var mergedPath = Path.Combine(tempRoot, $"{sessionId}.webm");
-
-        if (!System.IO.File.Exists(mergedPath))
+        public RecordingController(
+            IBlobContainer<ExamRecordingContainer> recordings,
+            IConfiguration config)
         {
-            return BadRequest("Geçici kayıt dosyası bulunamadı.");
+            _recordings = recordings;
+            _config = config;
         }
 
-        await using (var fs = System.IO.File.OpenRead(mergedPath))
+        private static string GetBlobName(Guid sessionId) => $"recordings/{sessionId}.webm";
+
+        // YENİ: Tek seferde tam webm dosyasını alır ve blob'a kaydeder.
+        // POST /api/recordings/finalize-upload?sessionId=...&mime=video/webm
+        [HttpPost("finalize-upload")]
+        public async Task<IActionResult> FinalizeUpload([FromQuery] Guid sessionId, [FromQuery] string? mime = null)
         {
-            var blobName = GetBlobName(sessionId);
-            await _recordings.SaveAsync(blobName, fs, overrideExisting: true);
+            if (sessionId == Guid.Empty)
+                return BadRequest("sessionId zorunludur.");
+
+            // Gövde yoksa hata
+            if (Request.Body == null)
+                return BadRequest("Boş içerik.");
+
+            // Body akışını doğrudan blob'a kopyala
+            await _recordings.SaveAsync(GetBlobName(sessionId), Request.Body, overrideExisting: true);
+
+            return Ok(new { ok = true });
         }
 
-        System.IO.File.Delete(mergedPath);
-
-        return Ok(new { ok = true });
-    }
-
-    [HttpPost("cancel")]
-    public IActionResult Cancel([FromForm] Guid sessionId)
-    {
-        var tempRoot = _config["Exam:RecordingTemp"] ?? "App_Data/recordings_tmp";
-        var mergedPath = Path.Combine(tempRoot, $"{sessionId}.webm");
-
-        if (System.IO.File.Exists(mergedPath))
+        // İNDİRME – admin panelinde kullanılacak
+        // GET /api/recordings/download?sessionId=...
+        [HttpGet("download")]
+        public async Task<IActionResult> Download([FromQuery] Guid sessionId)
         {
-            System.IO.File.Delete(mergedPath);
+            if (sessionId == Guid.Empty)
+                return BadRequest("sessionId zorunludur.");
+
+            var name = GetBlobName(sessionId);
+            if (!await _recordings.ExistsAsync(name))
+                return NotFound();
+
+            var stream = await _recordings.GetAsync(name);
+            return File(stream, "video/webm", $"{sessionId}.webm");
         }
-
-        return Ok();
     }
-
-    [HttpGet("{sessionId:guid}")]
-    public async Task<IActionResult> Download(Guid sessionId)
-    {
-        var blobName = GetBlobName(sessionId);
-        if (!await _recordings.ExistsAsync(blobName))
-        {
-            return NotFound();
-        }
-
-        var stream = await _recordings.GetAsync(blobName);
-        return File(stream, "video/webm", $"{sessionId}.webm");
-    }
-
-    private static string GetBlobName(Guid sessionId)
-        => $"recordings/{sessionId}.webm";
 }

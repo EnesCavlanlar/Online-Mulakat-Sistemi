@@ -16,7 +16,16 @@
 
 @implements IAsyncDisposable
 
-<h3>@(_test?.TestName ?? "Sınav")</h3>
+<h3 class="d-flex justify-content-between align-items-center">
+    <span>@(_test?.TestName ?? "Sınav")</span>
+
+    @if (_remainingSeconds > 0)
+    {
+        <span class="badge bg-info text-dark">
+            Kalan süre: @_remainingMinutesDisplay dk @_remainingSecondsDisplay sn
+        </span>
+    }
+</h3>
 
 <div class="alert alert-warning">
     Sekme değiştirir veya odak kaybı yaşarsan sınavın iptal edilebilir. Lütfen bu pencereden ayrılma.
@@ -29,46 +38,20 @@
 else if (_finished)
 {
     <div class="alert alert-success">
-        Sınav tamamlandı. Puanın: <strong>@_finalScore</strong>
-    </div>
-
-    <button class="btn btn-secondary" @onclick="GoHome">Kapat</button>
-}
-else if (!_mediaReady)
-{
-    <div class="card mt-3">
-        <div class="card-body">
-            <h5 class="card-title">Kamera ve Mikrofon İzni</h5>
-            <p>
-                Sınava başlamadan önce tarayıcının kamera ve mikrofon izni vermesi gerekiyor.
-                Tarayıcın bir izin penceresi gösterecek; lütfen <strong>İzin ver</strong> seçeneğini işaretle.
-            </p>
-
-            <div class="row">
-                <div class="col-md-6">
-                    <video id="exam-media-preview"
-                           autoplay
-                           muted
-                           playsinline
-                           style="max-width: 100%; border-radius: 8px; background: #000;">
-                    </video>
-                </div>
-                <div class="col-md-6">
-                    <span id="exam-media-status" class="text-muted"></span>
-
-                    @if (_mediaRequestInProgress)
-                    {
-                        <p class="mt-2 text-info">İzin isteniyor, lütfen tarayıcı penceresini kontrol et...</p>
-                    }
-
-                    <button class="btn btn-primary mt-3"
-                            disabled="@_mediaRequestInProgress"
-                            @onclick="RequestMediaAsync">
-                        @(_mediaRequestInProgress ? "İzin Bekleniyor..." : "Kamera ve Mikrofonu Aç")
-                    </button>
-                </div>
-            </div>
-        </div>
+        @if (_finishedByTimeout)
+        {
+            <span>Süreniz dolduğu için sınav otomatik olarak tamamlandı.</span>
+    
+            <br />
+        }
+        else
+        {
+            <span>Sınavı başarıyla tamamladınız.</span>
+    
+            <br />
+        }
+        Puanın: <strong>@_finalScore</strong><br />
+        Bu pencere birazdan kapanacaktır. Teşekkürler.
     </div>
 }
 else if (_test == null)
@@ -81,14 +64,8 @@ else if (CurrentQuestion == null)
 }
 else
 {
-    <div class="d-flex justify-content-between align-items-center mb-3">
-        <div>
-            Soru @(_currentIndex + 1) / @_test.Questions.Count
-        </div>
-
-        <div class="badge bg-secondary fs-6">
-            @FormatRemaining()
-        </div>
+    <div class="mb-3">
+        Soru @(_currentIndex + 1) / @_test.Questions.Count
     </div>
 
     <div class="card mb-3">
@@ -127,6 +104,7 @@ else
                         <textarea class="form-control"
                                   rows="14"
                                   spellcheck="false"
+                                  style="font-family: Consolas, 'Courier New', monospace;"
                                   value="@GetTextAnswer(CurrentQuestion.Id)"
                                   @onchange="(ChangeEventArgs e) => SetTextAnswer(CurrentQuestion.Id, e.Value?.ToString())">
                                     </textarea>
@@ -202,17 +180,9 @@ else
     private int _currentIndex;
     private bool _saving;
     private bool _finished;
+    private bool _finishedByTimeout;
     private int _finalScore;
     private string? _error;
-
-    // media / proctoring state
-    private bool _mediaReady = false;
-    private bool _mediaRequestInProgress = false;
-
-    // timer
-    private int _remainingSeconds;
-    private System.Threading.Timer? _timer;
-    private bool _timeUpHandled = false;
 
     // MCQ & text cevap state
     private readonly Dictionary<Guid, HashSet<Guid>> _selected = new();
@@ -222,6 +192,16 @@ else
     private bool _runningCode;
     private string? _runOutput;
     private string? _runError;
+
+    // Proctor JS ref (NOT: iç sınıf tanımlama yok!)
+    private DotNetObjectReference<Runner>? _dotNetRef;
+
+    // Geri sayım
+    private int _remainingSeconds = 0;
+    private System.Timers.Timer? _timer;
+
+    private int _remainingMinutesDisplay => _remainingSeconds / 60;
+    private int _remainingSecondsDisplay => _remainingSeconds % 60;
 
     private QuestionRunDto? CurrentQuestion =>
         _test?.Questions != null && _currentIndex >= 0 && _currentIndex < _test.Questions.Count
@@ -243,24 +223,18 @@ else
                     _selected[q.Id] = new HashSet<Guid>();
 
                     if (q.Type == QT.Coding)
-                    {
                         _texts[q.Id] = GetDefaultCodeTemplate();
-                    }
                     else
-                    {
                         _texts[q.Id] = null;
-                    }
                 }
             }
 
-            // süre: appsettings.Exam.DefaultDurationMinutes yoksa 30 dk
-            var durationStr = Config["Exam:DefaultDurationMinutes"];
-            if (!int.TryParse(durationStr, out var minutes) || minutes <= 0)
+            // Süre bilgisi varsa geri sayımı başlat
+            if (_test != null && _test.DurationMinutes > 0)
             {
-                minutes = 30;
+                _remainingSeconds = _test.DurationMinutes * 60;
+                StartTimer();
             }
-
-            _remainingSeconds = minutes * 60;
         }
         catch (Exception ex)
         {
@@ -268,101 +242,19 @@ else
         }
     }
 
-    protected override Task OnAfterRenderAsync(bool firstRender)
+    protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        // Kamera/mikrofon izni biz butona basınca isteyeceğiz,
-        // burada sadece ilk render sonrası bir şey yapmıyoruz.
-        return Task.CompletedTask;
-    }
+        if (!firstRender || _test == null)
+            return;
 
-    // ---------- media izin & kayıt başlatma ----------
+        // DotNetObjectReference oluştur
+        _dotNetRef ??= DotNetObjectReference.Create(this);
 
-    private async Task RequestMediaAsync()
-    {
-        _mediaRequestInProgress = true;
-        StateHasChanged();
+        // Proctor init (focus/blur vs.)
+        await SafeInvokeVoidAsync("examProctor.init", _dotNetRef, SessionId.ToString());
 
-        try
-        {
-            // exam-media.js içindeki window.mediaGate.request(videoId, statusSpanId)
-            var ok = await SafeInvokeAsync<bool>("mediaGate.request", "exam-media-preview", "exam-media-status");
-
-            if (!ok)
-            {
-                _error = "Kamera/mikrofon izni alınamadı. Lütfen tarayıcı ayarlarını kontrol et.";
-                _mediaRequestInProgress = false;
-                return;
-            }
-
-            // izin alındı → proctor + recorder başlat
-            await SafeInvokeVoidAsync("examProctor.init", SessionId.ToString());
-            await SafeInvokeVoidAsync("examRecorder.start", SessionId.ToString(), 2000, true);
-
-            _mediaReady = true;
-            _mediaRequestInProgress = false;
-
-            StartTimer();
-        }
-        catch (Exception ex)
-        {
-            _error = ex.Message;
-            _mediaRequestInProgress = false;
-        }
-        finally
-        {
-            StateHasChanged();
-        }
-    }
-
-    private void StartTimer()
-    {
-        _timer?.Dispose();
-
-        _timer = new System.Threading.Timer(async _ =>
-        {
-            if (_remainingSeconds <= 0)
-            {
-                if (_timeUpHandled) return;
-                _timeUpHandled = true;
-                _timer?.Dispose();
-
-                await InvokeAsync(async () =>
-                {
-                    _error = "Süre doldu, sınav otomatik olarak sonlandırılıyor.";
-                    await FinishExam();
-                    StateHasChanged();
-                });
-
-                return;
-            }
-
-            _remainingSeconds--;
-
-            await InvokeAsync(StateHasChanged);
-        },
-        null,
-        1000,
-        1000);
-    }
-
-    private string FormatRemaining()
-    {
-        if (_remainingSeconds < 0) _remainingSeconds = 0;
-        var m = _remainingSeconds / 60;
-        var s = _remainingSeconds % 60;
-        return $"{m:D2}:{s:D2}";
-    }
-
-    private async Task<T> SafeInvokeAsync<T>(string identifier, params object[] args)
-    {
-        try
-        {
-            return await JS.InvokeAsync<T>(identifier, args);
-        }
-        catch
-        {
-            return default!;
-        }
+        // Kamera + ses (ve istenirse ekran) kaydını başlat
+        await SafeInvokeVoidAsync("examRecorder.start", SessionId.ToString(), 2000, true);
     }
 
     private async Task SafeInvokeVoidAsync(string identifier, params object[] args)
@@ -373,7 +265,7 @@ else
         }
         catch
         {
-            // JS tarafı yoksa sessiz geç
+            // JS yoksa sessiz geç
         }
     }
 
@@ -390,21 +282,14 @@ else
             _selected[questionId] = set;
         }
 
-        if (selected)
-            set.Add(optionId);
-        else
-            set.Remove(optionId);
+        if (selected) set.Add(optionId);
+        else set.Remove(optionId);
     }
 
     private string GetTextAnswer(Guid questionId)
         => _texts.TryGetValue(questionId, out var t) ? t ?? string.Empty : string.Empty;
 
-    private void SetTextAnswer(Guid questionId, string? text)
-    {
-        _texts[questionId] = text;
-    }
-
-    // ---------- Varsayılan C# şablonu ----------
+    private void SetTextAnswer(Guid questionId, string? text) => _texts[questionId] = text;
 
     private string GetDefaultCodeTemplate() =>
 @"using System;
@@ -474,10 +359,7 @@ public class Program
             _runOutput = res.Output;
             _runError = res.Error;
         }
-        catch (Exception ex)
-        {
-            _runError = ex.Message;
-        }
+        catch (Exception ex) { _runError = ex.Message; }
         finally
         {
             _runningCode = false;
@@ -503,13 +385,9 @@ public class Program
             string? textAnswer = null;
 
             if (q.Type == QT.MultipleChoice)
-            {
                 selectedIds = _selected[q.Id].ToArray();
-            }
-            else if (q.Type == QT.Classic || q.Type == QT.Coding)
-            {
+            else if (q.Type is QT.Classic or QT.Coding)
                 textAnswer = GetTextAnswer(q.Id);
-            }
 
             var dto = new SubmitAnswerDto
             {
@@ -521,10 +399,7 @@ public class Program
 
             await RunApp.SubmitAnswerAsync(dto);
         }
-        catch (Exception ex)
-        {
-            _error = ex.Message;
-        }
+        catch (Exception ex) { _error = ex.Message; }
         finally
         {
             _saving = false;
@@ -532,74 +407,103 @@ public class Program
         }
     }
 
-    private async Task FinishExam()
+    private Task FinishExam() => FinishExamInternal(false);
+
+    private async Task FinishExamInternal(bool auto)
     {
         if (_finished || _test == null)
             return;
 
         try
         {
+            _timer?.Stop();
+            _remainingSeconds = 0;
+
             await SaveCurrentAsync();
 
             var score = await RunApp.ComputeAndSaveScoreAsync(SessionId);
             _finalScore = score;
 
-            await SessionApp.FinishAsync(SessionId, score, "Runner'dan otomatik tamamlandı.");
+            _finishedByTimeout = auto;
+            var note = auto
+                ? "Süre dolduğu için otomatik tamamlandı."
+                : "Runner'dan kullanıcı tarafından tamamlandı.";
+
+            await SessionApp.FinishAsync(SessionId, score, note);
 
             _finished = true;
 
+            // 1) Kaydı durdur → finalize tetiklenecek
             await SafeInvokeVoidAsync("examRecorder.stop", SessionId.ToString());
+
+            // 2) Pencereyi kapatmayı dene; kapanmazsa redirect (ExamLayout'ta fallback var)
+            await JS.InvokeVoidAsync("examRunner.closeWindow");
         }
-        catch (Exception ex)
-        {
-            _error = ex.Message;
-        }
+        catch (Exception ex) { _error = ex.Message; }
     }
 
     private async Task CancelExam()
     {
         try
         {
+            _timer?.Stop();
+            _remainingSeconds = 0;
+
             await SessionApp.CancelAsync(SessionId, "Kullanıcı iptal etti.");
             await SafeInvokeVoidAsync("examRecorder.cancel", SessionId.ToString());
-            GoHome();
+            await JS.InvokeVoidAsync("examRunner.closeWindow");
         }
-        catch (Exception ex)
-        {
-            _error = ex.Message;
-        }
-    }
-
-    private void GoHome()
-    {
-        Nav.NavigateTo("/");
+        catch (Exception ex) { _error = ex.Message; }
     }
 
     public async ValueTask DisposeAsync()
     {
         try
         {
-            _timer?.Dispose();
             await SafeInvokeVoidAsync("examRecorder.stop", SessionId.ToString());
             await SafeInvokeVoidAsync("examProctor.dispose", SessionId.ToString());
         }
-        catch
-        {
-            // önemli değil
-        }
+        catch { /* no-op */ }
+
+        _timer?.Dispose();
+        _dotNetRef?.Dispose();
     }
 
-    // Proctoring tarafı JS'den çağırabilir
     [JSInvokable]
     public async Task ReportFocusLost(string? detail)
     {
-        try
+        try { await SessionApp.RecordEventAsync(SessionId, ProctoringEventType.FocusLost, detail); }
+        catch { }
+    }
+
+    // ---------- Timer ----------
+
+    private void StartTimer()
+    {
+        if (_remainingSeconds <= 0)
+            return;
+
+        _timer = new System.Timers.Timer(1000);
+        _timer.Elapsed += (_, __) =>
         {
-            await SessionApp.RecordEventAsync(SessionId, ProctoringEventType.FocusLost, detail);
-        }
-        catch
-        {
-            // sessiz geç
-        }
+            if (_finished)
+            {
+                _timer?.Stop();
+                return;
+            }
+
+            if (_remainingSeconds <= 0)
+            {
+                _timer?.Stop();
+                _ = InvokeAsync(() => FinishExamInternal(true));
+            }
+            else
+            {
+                _remainingSeconds--;
+                _ = InvokeAsync(StateHasChanged);
+            }
+        };
+        _timer.AutoReset = true;
+        _timer.Start();
     }
 }
