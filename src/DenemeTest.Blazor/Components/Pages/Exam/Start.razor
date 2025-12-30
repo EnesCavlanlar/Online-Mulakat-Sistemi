@@ -7,146 +7,106 @@
 
 @implements IAsyncDisposable
 
-<h3 class="mb-3">Sınav Girişi</h3>
+<h3>Sınav Girişi</h3>
 
-@if (_error != null)
+@if (!string.IsNullOrWhiteSpace(_error))
 {
     <div class="alert alert-danger">@_error</div>
 }
 else
 {
-    <div class="alert alert-info">
-        Bu sayfaya girdiğinizde kamera + mikrofon izni istenir.
-        İzni vermeden sınava başlayamazsınız.
-    </div>
+    <ol class="mb-3">
+        <li>Kamera ve mikrofona izin ver.</li>
+        <li><strong>Tüm ekran</strong> paylaşım izni ver.</li>
+        <li>Her iki izin aktif olunca <b>Sınava Başla</b> butonu açılır.</li>
+    </ol>
 
-    <div class="card mb-3">
-        <div class="card-body">
-
-            <div class="d-flex align-items-start gap-4 flex-wrap">
-
-                <!-- Video Preview -->
-                <video id="previewVideo"
-                       width="320"
-                       height="240"
-                       class="border rounded bg-dark"
-                       autoplay
-                       playsinline
-                       muted></video>
-
-                <!-- Control Panel -->
-                <div class="d-flex flex-column gap-2">
-
-                    <button class="btn btn-outline-primary"
-                            @onclick="RequestPermission"
-                            disabled="@_requesting">
-                        @(_granted ? "Kamera/Mikrofon Açık (Tekrar Dene)" : "Kamera/Mikrofon İzni Tekrar İste")
-                    </button>
-
-                    <div>
-                        Durum:
-                        <span id="statusText"
-                              class="badge @( _granted ? "bg-success" : "bg-secondary")">
-                            @_statusText
-                        </span>
+    <div class="row g-3">
+        <div class="col-md-6">
+            <div class="card h-100">
+                <div class="card-header">Kamera Önizleme</div>
+                <div class="card-body">
+                    <video id="camPreview" class="border rounded w-100" autoplay playsinline muted style="height:240px"></video>
+                    <div class="d-flex align-items-center gap-2 mt-2">
+                        <button class="btn btn-outline-primary btn-sm" @onclick="RequestCam" disabled="@_camOk">
+                            @(_camOk ? "Kamera/Mikrofon Açık" : "Kamera/Mikrofon izni Ver")
+                        </button>
+                        <span class="badge @( _camOk ? "bg-success" : "bg-secondary" )">@(_camOk ? "Hazır" : "Bekleniyor")</span>
                     </div>
-
-                    <small class="text-muted">
-                        Tarayıcı izin penceresi görünmezse butona tekrar basabilir veya sayfayı yenileyebilirsiniz.
-                    </small>
-
                 </div>
             </div>
+        </div>
 
+        <div class="col-md-6">
+            <div class="card h-100">
+                <div class="card-header">Ekran Paylaşımı Önizleme</div>
+                <div class="card-body">
+                    <video id="screenPreview" class="border rounded w-100" autoplay playsinline muted style="height:240px"></video>
+                    <div class="d-flex align-items-center gap-2 mt-2">
+                        <button class="btn btn-outline-primary btn-sm" @onclick="RequestScreen" disabled="@_screenOk">
+                            @(_screenOk ? "Ekran Paylaşımı Açık" : "Tüm Ekrana Erişim izni Ver")
+                        </button>
+                        <span class="badge @( _screenOk ? "bg-success" : "bg-secondary" )">@(_screenOk ? "Hazır" : "Bekleniyor")</span>
+                    </div>
+                    <small class="text-muted d-block mt-2">
+                        İpucu: “Tüm ekran”ı seçersen sekme değiştirilse bile kayıt devam eder.
+                    </small>
+                </div>
+            </div>
         </div>
     </div>
 
-    <button class="btn btn-primary"
-            @onclick="StartExam"
-            disabled="@(!_granted || _starting)">
-        @(_starting ? "Başlatılıyor..." : "Sınava Başla")
-    </button>
+    <div class="mt-3">
+        <button class="btn btn-primary" @onclick="StartExam" disabled="@(!(_camOk && _screenOk) || _starting)">
+            @(_starting ? "Başlatılıyor..." : "Sınava Başla")
+        </button>
+    </div>
 }
 
-@code {
+@code
+{
     [Parameter] public string Token { get; set; } = default!;
 
     private string? _error;
-    private bool _granted;
-    private bool _requesting;
-    private bool _starting;
-    private bool _permissionRequestedOnce;
-    private string _statusText = "Bekleniyor";
+    private bool _camOk, _screenOk, _starting;
 
-    // Sayfa ilk render olduğunda otomatik izin iste
-    protected override async Task OnAfterRenderAsync(bool firstRender)
+    private async Task RequestCam()
     {
-        if (firstRender && !_permissionRequestedOnce)
-        {
-            _permissionRequestedOnce = true;
-            await RequestPermission();
-        }
+        try { _camOk = await JS.InvokeAsync<bool>("mediaGate.requestCam", "camPreview"); }
+        catch (Exception ex) { _error = ex.Message; }
+        StateHasChanged();
     }
 
-    private async Task RequestPermission()
+    private async Task RequestScreen()
     {
-        if (_requesting) return;
-
-        _requesting = true;
-        _statusText = "İzin isteniyor...";
-        StateHasChanged();
-
-        try
-        {
-            // JS: mediaGate.request(videoElementId, statusElementId)
-            var ok = await JS.InvokeAsync<bool>(
-                "mediaGate.request",
-                "previewVideo",
-                "statusText"
-            );
-
-            _granted = ok;
-            _statusText = ok ? "İzin verildi, kamera açık." : "İzin alınamadı!";
-        }
-        catch
-        {
-            _granted = false;
-            _statusText = "JS hatası, konsolu kontrol edin.";
-        }
-
-        _requesting = false;
+        try { _screenOk = await JS.InvokeAsync<bool>("mediaGate.requestScreen", "screenPreview"); }
+        catch (Exception ex) { _error = ex.Message; }
         StateHasChanged();
     }
 
     private async Task StartExam()
     {
-        // Güvenlik için ekstra kontrol: izin yoksa hiçbir şey yapma
-        if (!_granted) return;
-
+        if (!(_camOk && _screenOk)) return;
         try
         {
-            _starting = true;
-            StateHasChanged();
+            _starting = true; StateHasChanged();
+
+            await JS.InvokeVoidAsync("mediaGate.stopPreview", "camPreview");
+            await JS.InvokeVoidAsync("mediaGate.stopPreview", "screenPreview");
 
             var res = await ExamSessionApp.StartByTokenAsync(Token);
             Nav.NavigateTo($"/exam/runner/{res.Id}");
         }
-        catch (Exception ex)
-        {
-            _error = "Geçersiz veya süresi dolmuş sınav bağlantısı! " + ex.Message;
-            _starting = false;
-        }
+        catch (Exception ex) { _error = ex.Message; _starting = false; }
     }
 
     public async ValueTask DisposeAsync()
     {
         try
         {
-            await JS.InvokeVoidAsync("mediaGate.stop", "previewVideo", "statusText");
+            await JS.InvokeVoidAsync("mediaGate.stopPreview", "camPreview");
+            await JS.InvokeVoidAsync("mediaGate.stopPreview", "screenPreview");
         }
-        catch
-        {
-            // önemli değil
-        }
+        catch { }
     }
 }

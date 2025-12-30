@@ -1,130 +1,54 @@
-﻿// wwwroot/js/examProctor.js
-// Sekme/uygulama değişimini %99+ yakalamak için:
-// - blur / focusout / visibilitychange / pagehide / freeze
-// - watchdog: hasFocus + visibilityState her 100ms
-// - rAF gap dedektörü (tab gizlenince rAF durur)
-
+﻿// Sekme değişimi, blur, Alt+Tab, reload gibi ihlallerde .NET'e iptal çağrısı yapar.
 window.examProctor = (function () {
-    let dotnetRef = null;
-    let sessionId = null;
-    let armed = false;
+    let dotnet = null, sessionId = null, canceled = false;
 
-    let watchdog = null;
-    let rafId = null;
-    let lastRafTs = 0;
+    function init(dotnetRef, sessId) {
+        dotnet = dotnetRef; sessionId = sessId;
+        enforcePolicies();
+    }
 
-    function init(ref, sessId) {
-        dotnetRef = ref;
-        sessionId = sessId;
-        armed = true;
+    function enforcePolicies() {
+        try {
+            // 1) Sayfa reload edilmişse
+            const nav = performance.getEntriesByType && performance.getEntriesByType("navigation");
+            const type = nav && nav[0] ? nav[0].type :
+                (performance.navigation && performance.navigation.type === 1 ? "reload" : "navigate");
+            if (type === "reload") return hardCancel("Sayfa yenilendi");
 
-        // OLAYLAR
-        window.addEventListener('blur', onBlur, true);
-        window.addEventListener('focusout', onBlur, true);
-        document.addEventListener('visibilitychange', onVisibility, true);
-        window.addEventListener('pagehide', onPageHide, true);
-        document.addEventListener('freeze', onFreeze, true);
+            // 2) Odak/Görünürlük
+            window.addEventListener("blur", () => hardCancel("Odak kaybı"));
+            document.addEventListener("visibilitychange", () => {
+                if (document.visibilityState !== "visible") hardCancel("Sekme değiştirildi / görünürlük kaybı");
+            });
 
-        // Bazı kombinasyonlar (bonus)
-        window.addEventListener('keydown', onKeyDown, true);
+            // 3) Alt+Tab
+            window.addEventListener("keydown", (e) => {
+                if (e.altKey && (e.key === "Tab" || e.code === "Tab")) {
+                    hardCancel("Alt+Tab algılandı");
+                }
+            }, { capture: true });
 
-        // WATCHDOG (100ms): hasFocus + visibility
-        stopWatchdog();
-        watchdog = setInterval(() => {
-            if (!armed) return;
-            const hidden = document.visibilityState === 'hidden';
-            const focused = document.hasFocus();
-            if (hidden || !focused) {
-                fireAutoCancel(hidden ? 'watchdog:visibility-hidden' : 'watchdog:no-focus');
-            }
-        }, 100);
+            // 4) Ekran paylaşımı durduruldu sinyali recorder.js tarafından da iptal ettirilecek.
+        } catch (e) {
+            console.warn("[examProctor] enforcePolicies error", e);
+        }
+    }
 
-        // rAF GAP DEDT.
-        lastRafTs = performance.now();
-        const loop = (ts) => {
-            if (!armed) return; // durdu
-            // 200ms'den büyük rAF boşluğu -> tab gizlendi/uygulama arka plana gitti
-            if (ts - lastRafTs > 200) {
-                fireAutoCancel('raf-gap');
-                return;
-            }
-            lastRafTs = ts;
-            rafId = requestAnimationFrame(loop);
-        };
-        rafId = requestAnimationFrame(loop);
-
-        console.log('[proctor] armed for session', sessionId);
+    async function hardCancel(reason) {
+        if (canceled) return;
+        canceled = true;
+        try {
+            if (dotnet) { await dotnet.invokeMethodAsync("CancelByPolicy", reason || "Policy"); }
+        } catch (e) {
+            // server fallback (gerekirse)
+            try { await fetch(`/api/exam/cancel?sessionId=${encodeURIComponent(sessionId)}&reason=${encodeURIComponent(reason || "Policy")}`, { method: "POST" }); } catch { }
+        }
+        try { window.close(); } catch { }
     }
 
     function dispose() {
-        armed = false;
-
-        window.removeEventListener('blur', onBlur, true);
-        window.removeEventListener('focusout', onBlur, true);
-        document.removeEventListener('visibilitychange', onVisibility, true);
-        window.removeEventListener('pagehide', onPageHide, true);
-        document.removeEventListener('freeze', onFreeze, true);
-        window.removeEventListener('keydown', onKeyDown, true);
-
-        stopWatchdog();
-
-        if (rafId) cancelAnimationFrame(rafId);
-        rafId = null;
-
-        dotnetRef = null;
-        sessionId = null;
+        // temizleme gerekirse
     }
 
-    function stopWatchdog() {
-        if (watchdog) {
-            clearInterval(watchdog);
-            watchdog = null;
-        }
-    }
-
-    // --- Handlers ---
-    function onBlur() {
-        if (!armed) return;
-        fireAutoCancel('blur/focusout');
-    }
-
-    function onVisibility() {
-        if (!armed) return;
-        if (document.visibilityState === 'hidden') {
-            fireAutoCancel('visibility-hidden');
-        }
-    }
-
-    function onPageHide() {
-        if (!armed) return;
-        fireAutoCancel('pagehide');
-    }
-
-    function onFreeze() {
-        if (!armed) return;
-        fireAutoCancel('freeze');
-    }
-
-    function onKeyDown(e) {
-        if (!armed) return;
-        // Bazı tarayıcılar Alt+Tab'i yakalatmaz ama yakalarsa yine iptal
-        if ((e.altKey || e.metaKey) && e.key === 'Tab') {
-            e.preventDefault();
-            fireAutoCancel('key:alt/meta+tab');
-        }
-    }
-
-    async function fireAutoCancel(reason) {
-        if (!armed || !dotnetRef) return;
-        armed = false; // tek sefer
-        try {
-            await dotnetRef.invokeMethodAsync('FocusLostAutoCancel', reason || null);
-        } catch (err) {
-            console.error('[proctor] FocusLostAutoCancel invoke failed:', err);
-        }
-        // event/interval temizliği
-        dispose();
-    }
-
-    return { init, dispose };
+    return { init, enforcePolicies, dispose };
 })();

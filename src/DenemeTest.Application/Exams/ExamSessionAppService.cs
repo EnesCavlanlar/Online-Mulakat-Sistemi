@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Linq;
 using System.Threading.Tasks;
 using DenemeTest.Exams;
 using DenemeTest.Exams.Dtos;
@@ -45,6 +46,18 @@ public class ExamSessionAppService : ApplicationService, IExamSessionAppService
         if (inv.ExpireAt < DateTime.UtcNow)
             throw new UserFriendlyException("Davetin süresi geçmiş.");
 
+        // Aynı aday + aynı test için bitmemiş/iptal edilmemiş tek aktif oturum kuralı
+        var alreadyActive = await _sessionRepo.FirstOrDefaultAsync(s =>
+            s.TestId == inv.TestId &&
+            s.CandidateId == inv.CandidateId &&
+            !s.IsCancelled &&
+            s.FinishedAt == null
+        );
+
+        if (alreadyActive != null)
+            throw new UserFriendlyException("Bu test için zaten aktif bir oturum var.");
+
+        // Oturum oluştur
         var session = new ExamSession(
             GuidGenerator.Create(),
             inv.TestId,
@@ -54,6 +67,7 @@ public class ExamSessionAppService : ApplicationService, IExamSessionAppService
 
         await _sessionRepo.InsertAsync(session, true);
 
+        // Token tek kullanımlık
         inv.MarkUsed();
         await _invRepo.UpdateAsync(inv, true);
 
@@ -62,7 +76,7 @@ public class ExamSessionAppService : ApplicationService, IExamSessionAppService
             Id = session.Id,
             TestId = inv.TestId,
             CandidateId = inv.CandidateId,
-            CandidateName = "" // Blazor tarafında gerekirse CandidateApp'ten çekeriz
+            CandidateName = "" // UI gerekirse ayrı servisten doldur
         };
     }
 
@@ -70,25 +84,12 @@ public class ExamSessionAppService : ApplicationService, IExamSessionAppService
 
     public async Task RecordEventAsync(Guid sessionId, ProctoringEventType type, string? detail)
     {
-        // Oturumu çek
         var session = await _sessionRepo.GetAsync(sessionId);
 
-        if (session.IsCancelled)
-        {
-            // İptal edilmiş oturuma yeni ihlal yazmanın anlamı yok ama event'i yine de kaydedebiliriz.
-        }
-
-        // Event kaydı
-        var ev = new ProctoringEvent(
-            GuidGenerator.Create(),
-            sessionId,
-            type,
-            detail
-        );
+        var ev = new ProctoringEvent(GuidGenerator.Create(), sessionId, type, detail);
         await _eventRepo.InsertAsync(ev, true);
 
-        // Basit kural: Her proctoring event bir ihlal sayılır.
-        // (İleride event tipine göre filtreleyebiliriz.)
+        // Basit kural: her event ihlal sayılır
         session.RegisterViolation();
 
         var max = GetMaxViolations();
@@ -105,18 +106,13 @@ public class ExamSessionAppService : ApplicationService, IExamSessionAppService
     public async Task CancelAsync(Guid sessionId, string reason)
     {
         var s = await _sessionRepo.GetAsync(sessionId);
-        if (!s.IsCancelled)
+        if (!s.IsCancelled && s.FinishedAt == null)
         {
             s.Cancel(reason);
             await _sessionRepo.UpdateAsync(s, true);
         }
     }
 
-    /// <summary>
-    /// Oturumu normal şekilde bitirir. İstenirse skor da manuel olarak set edilebilir.
-    /// (ComputeAndSaveScoreAsync ile otomatik skor hesapladıysan, bu methodu sadece
-    /// oturumu bitirmek için scoreValue=null göndererek kullan.)
-    /// </summary>
     public async Task FinishAsync(Guid sessionId, int? scoreValue = null, string? scoreNote = null)
     {
         var s = await _sessionRepo.GetAsync(sessionId);
@@ -129,20 +125,13 @@ public class ExamSessionAppService : ApplicationService, IExamSessionAppService
 
         if (scoreValue.HasValue)
         {
-            // Eski skor varsa sil, manuel yeni skor yaz
             var existing = await _scoreRepo.FirstOrDefaultAsync(x => x.ExamSessionId == sessionId);
             if (existing != null)
             {
                 await _scoreRepo.DeleteAsync(existing, true);
             }
 
-            var sc = new Score(
-                GuidGenerator.Create(),
-                sessionId,
-                scoreValue.Value,
-                scoreNote
-            );
-
+            var sc = new Score(GuidGenerator.Create(), sessionId, scoreValue.Value, scoreNote);
             await _scoreRepo.InsertAsync(sc, true);
         }
     }
@@ -151,16 +140,8 @@ public class ExamSessionAppService : ApplicationService, IExamSessionAppService
 
     private int GetMaxViolations()
     {
-        // appsettings.json:
-        // "Exam": { "MaxViolations": 2, ... }
         var str = _config["Exam:MaxViolations"];
-
-        if (int.TryParse(str, out var value) && value > 0)
-        {
-            return value;
-        }
-
-        // Default
+        if (int.TryParse(str, out var value) && value > 0) return value;
         return 2;
     }
 }

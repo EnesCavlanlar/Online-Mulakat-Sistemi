@@ -1,6 +1,4 @@
 ﻿@page "/admin/session/{SessionId:guid}"
-
-@* DTO artık Application katmanında *@
 @using DenemeTest.Application.Exams
 @inject IReportsAppService ReportsApp
 @inject NavigationManager Nav
@@ -28,39 +26,52 @@ else
                 : (_detail.EndTime.HasValue ? "badge bg-success" : "badge bg-secondary");
             }
 
-            <p>
-                <b>Durum:</b>
-                <span class="@statusCss">@statusText</span>
-            </p>
-
+            <p><b>Durum:</b> <span class="@statusCss">@statusText</span></p>
             <p><b>Başlangıç:</b> @(_detail.StartTime?.ToString("yyyy-MM-dd HH:mm") ?? "-")</p>
             <p><b>Bitiş:</b> @(_detail.EndTime?.ToString("yyyy-MM-dd HH:mm") ?? "-")</p>
             <p><b>İhlal sayısı:</b> @_detail.Violations</p>
 
             @if (_detail.IsCancelled && !string.IsNullOrWhiteSpace(_detail.CancelReason))
             {
-                <p>
-                    <b>İptal sebebi:</b> @_detail.CancelReason
-                </p>
+                <p><b>İptal sebebi:</b> @_detail.CancelReason</p>
             }
 
-            <h5 class="mt-3">Kayıt</h5>
-            <video controls
-                   style="max-width:100%;border-radius:8px;background:#000;"
-                   src="@($"/api/recordings/download?sessionId={SessionId}")">
-                Tarayıcınız video oynatmayı desteklemiyor.
-            </video>
+            <h5 class="mt-3">Kayıtlar</h5>
 
-            <div class="mt-2">
-                <a class="btn btn-sm btn-outline-secondary me-2"
-                   href="@($"/api/recordings/download?sessionId={SessionId}")"
-                   target="_blank">
-                    Kaydı indir
-                </a>
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <div class="card h-100">
+                        <div class="card-header">Kamera</div>
+                        <div class="card-body">
+                            <video controls preload="metadata" style="width:100%;border-radius:8px;background:#000"
+                                   src="@($"/api/recordings/download?sessionId={SessionId}&kind=cam")"></video>
+                            <div class="mt-2">
+                                <a class="btn btn-sm btn-outline-secondary"
+                                   href="@($"/api/recordings/download?sessionId={SessionId}&kind=cam")"
+                                   target="_blank">Kamerayı indir</a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
 
-                <button class="btn btn-sm btn-outline-primary" @onclick="@GoBack">
-                    Listeye dön
-                </button>
+                <div class="col-md-6">
+                    <div class="card h-100">
+                        <div class="card-header">Ekran</div>
+                        <div class="card-body">
+                            <video controls preload="metadata" style="width:100%;border-radius:8px;background:#000"
+                                   src="@($"/api/recordings/download?sessionId={SessionId}&kind=screen")"></video>
+                            <div class="mt-2">
+                                <a class="btn btn-sm btn-outline-secondary"
+                                   href="@($"/api/recordings/download?sessionId={SessionId}&kind=screen")"
+                                   target="_blank">Ekranı indir</a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mt-3">
+                <button class="btn btn-sm btn-outline-primary" @onclick="@GoBack">Listeye dön</button>
             </div>
         </div>
     </div>
@@ -87,7 +98,7 @@ else
                 {
                     <div class="alert alert-secondary">
                         <b>Kod Çıktısı:</b><br />
-                        <pre>@ans.CodeOutput</pre>
+                        <pre class="mb-0">@ans.CodeOutput</pre>
                     </div>
                 }
             </div>
@@ -104,8 +115,5 @@ else
         _detail = await ReportsApp.GetSessionDetailAsync(SessionId);
     }
 
-    private void GoBack()
-    {
-        Nav.NavigateTo("/admin/reports");
-    }
+    private void GoBack() => Nav.NavigateTo("/admin/reports");
 }

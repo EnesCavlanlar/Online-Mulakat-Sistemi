@@ -1,63 +1,56 @@
-﻿using DenemeTest.Storage;
+﻿using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using System;
 using System.IO;
 using System.Threading.Tasks;
-using Volo.Abp.BlobStoring;
 
 namespace DenemeTest.Blazor.Controllers
 {
     [Route("api/recordings")]
-    [ApiController]
-    [IgnoreAntiforgeryToken]
-    public class RecordingController : ControllerBase
+    public class RecordingController : Controller
     {
-        private readonly IBlobContainer<ExamRecordingContainer> _recordings;
-        private readonly IConfiguration _config;
+        private readonly string _root;
 
-        public RecordingController(
-            IBlobContainer<ExamRecordingContainer> recordings,
-            IConfiguration config)
+        public RecordingController(IConfiguration config, IWebHostEnvironment env)
         {
-            _recordings = recordings;
-            _config = config;
+            // appsettings.json: "Exam": { "RecordingTemp": "App_Data/recordings" }
+            var cfg = config.GetSection("Exam:RecordingTemp")?.Value ?? "App_Data/recordings";
+            _root = Path.IsPathRooted(cfg) ? cfg : Path.Combine(env.ContentRootPath, cfg);
+            Directory.CreateDirectory(_root);
         }
 
-        private static string GetBlobName(Guid sessionId) => $"recordings/{sessionId}.webm";
-
-        // YENİ: Tek seferde tam webm dosyasını alır ve blob'a kaydeder.
-        // POST /api/recordings/finalize-upload?sessionId=...&mime=video/webm
+        // POST /api/recordings/finalize-upload?sessionId={guid}&mime=video/webm&kind=cam|screen
         [HttpPost("finalize-upload")]
-        public async Task<IActionResult> FinalizeUpload([FromQuery] Guid sessionId, [FromQuery] string? mime = null)
+        public async Task<IActionResult> FinalizeUpload([FromQuery] Guid sessionId, [FromQuery] string? mime, [FromQuery] string kind)
         {
-            if (sessionId == Guid.Empty)
-                return BadRequest("sessionId zorunludur.");
+            if (sessionId == Guid.Empty) return BadRequest("sessionId empty");
+            kind = (kind ?? "cam").ToLowerInvariant();
+            if (kind != "cam" && kind != "screen") return BadRequest("kind must be cam|screen");
 
-            // Gövde yoksa hata
-            if (Request.Body == null)
-                return BadRequest("Boş içerik.");
+            var fileName = $"{sessionId:N}-{kind}.webm";
+            var path = Path.Combine(_root, fileName);
 
-            // Body akışını doğrudan blob'a kopyala
-            await _recordings.SaveAsync(GetBlobName(sessionId), Request.Body, overrideExisting: true);
+            using var fs = System.IO.File.Create(path);
+            await Request.Body.CopyToAsync(fs);
+            await fs.FlushAsync();
 
-            return Ok(new { ok = true });
+            return Ok(new { path = fileName });
         }
 
-        // İNDİRME – admin panelinde kullanılacak
-        // GET /api/recordings/download?sessionId=...
+        // GET /api/recordings/download?sessionId=...&kind=cam|screen
         [HttpGet("download")]
-        public async Task<IActionResult> Download([FromQuery] Guid sessionId)
+        public IActionResult Download([FromQuery] Guid sessionId, [FromQuery] string kind = "cam")
         {
-            if (sessionId == Guid.Empty)
-                return BadRequest("sessionId zorunludur.");
+            if (sessionId == Guid.Empty) return BadRequest();
+            kind = (kind ?? "cam").ToLowerInvariant();
+            var fileName = $"{sessionId:N}-{kind}.webm";
+            var path = Path.Combine(_root, fileName);
+            if (!System.IO.File.Exists(path)) return NotFound();
 
-            var name = GetBlobName(sessionId);
-            if (!await _recordings.ExistsAsync(name))
-                return NotFound();
-
-            var stream = await _recordings.GetAsync(name);
-            return File(stream, "video/webm", $"{sessionId}.webm");
+            var mime = "video/webm";
+            var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            return File(stream, mime, fileName);
         }
     }
 }
