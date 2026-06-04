@@ -147,9 +147,9 @@ public class DenemeTestDbContext :
             b.ToTable("AppExamInvitations");
             b.ConfigureByConvention();
 
-            b.Property(x => x.Token)
+            b.Property(x => x.TokenHash)
              .IsRequired()
-             .HasMaxLength(64);
+             .HasMaxLength(128);
 
             b.Property(x => x.ExpireAt)
              .IsRequired();
@@ -161,7 +161,7 @@ public class DenemeTestDbContext :
              .IsRequired()
              .HasDefaultValue(false);
 
-            b.HasIndex(x => x.Token).IsUnique();
+            b.HasIndex(x => x.TokenHash).IsUnique();
             b.HasIndex(x => new { x.CandidateId, x.TestId });
 
             b.HasOne<Candidate>()

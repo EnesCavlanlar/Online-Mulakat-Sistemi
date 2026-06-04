@@ -12,6 +12,10 @@
 @if (!string.IsNullOrWhiteSpace(_error))
 {
     <div class="alert alert-danger">@_error</div>
+
+    <button class="btn btn-secondary mt-2" @onclick="ClearError">
+        Tekrar Dene
+    </button>
 }
 else
 {
@@ -26,13 +30,29 @@ else
             <div class="card h-100">
                 <div class="card-header">Kamera Önizleme</div>
                 <div class="card-body">
-                    <video id="camPreview" class="border rounded w-100" autoplay playsinline muted style="height:240px"></video>
+                    <video id="camPreview"
+                           class="border rounded w-100"
+                           autoplay
+                           playsinline
+                           muted
+                           style="height:240px">
+                    </video>
+
                     <div class="d-flex align-items-center gap-2 mt-2">
-                        <button class="btn btn-outline-primary btn-sm" @onclick="RequestCam" disabled="@_camOk">
-                            @(_camOk ? "Kamera/Mikrofon Açık" : "Kamera/Mikrofon izni Ver")
+                        <button class="btn btn-outline-primary btn-sm"
+                                @onclick="RequestCam"
+                                disabled="@(_camOk || _requestingCam)">
+                            @GetCamButtonText()
                         </button>
-                        <span class="badge @( _camOk ? "bg-success" : "bg-secondary" )">@(_camOk ? "Hazır" : "Bekleniyor")</span>
+
+                        <span class="badge @(_camOk ? "bg-success" : "bg-secondary")">
+                            @(_camOk ? "Hazır" : "Bekleniyor")
+                        </span>
                     </div>
+
+                    <small class="text-muted d-block mt-2">
+                        Kamera ve mikrofon izni tarayıcı tarafından istenir.
+                    </small>
                 </div>
             </div>
         </div>
@@ -41,13 +61,26 @@ else
             <div class="card h-100">
                 <div class="card-header">Ekran Paylaşımı Önizleme</div>
                 <div class="card-body">
-                    <video id="screenPreview" class="border rounded w-100" autoplay playsinline muted style="height:240px"></video>
+                    <video id="screenPreview"
+                           class="border rounded w-100"
+                           autoplay
+                           playsinline
+                           muted
+                           style="height:240px">
+                    </video>
+
                     <div class="d-flex align-items-center gap-2 mt-2">
-                        <button class="btn btn-outline-primary btn-sm" @onclick="RequestScreen" disabled="@_screenOk">
-                            @(_screenOk ? "Ekran Paylaşımı Açık" : "Tüm Ekrana Erişim izni Ver")
+                        <button class="btn btn-outline-primary btn-sm"
+                                @onclick="RequestScreen"
+                                disabled="@(_screenOk || _requestingScreen)">
+                            @GetScreenButtonText()
                         </button>
-                        <span class="badge @( _screenOk ? "bg-success" : "bg-secondary" )">@(_screenOk ? "Hazır" : "Bekleniyor")</span>
+
+                        <span class="badge @(_screenOk ? "bg-success" : "bg-secondary")">
+                            @(_screenOk ? "Hazır" : "Bekleniyor")
+                        </span>
                     </div>
+
                     <small class="text-muted d-block mt-2">
                         İpucu: “Tüm ekran”ı seçersen sekme değiştirilse bile kayıt devam eder.
                     </small>
@@ -57,7 +90,9 @@ else
     </div>
 
     <div class="mt-3">
-        <button class="btn btn-primary" @onclick="StartExam" disabled="@(!(_camOk && _screenOk) || _starting)">
+        <button class="btn btn-primary"
+                @onclick="StartExam"
+                disabled="@(!(_camOk && _screenOk) || _starting)">
             @(_starting ? "Başlatılıyor..." : "Sınava Başla")
         </button>
     </div>
@@ -68,45 +103,183 @@ else
     [Parameter] public string Token { get; set; } = default!;
 
     private string? _error;
-    private bool _camOk, _screenOk, _starting;
+
+    private bool _camOk;
+    private bool _screenOk;
+    private bool _starting;
+    private bool _requestingCam;
+    private bool _requestingScreen;
 
     private async Task RequestCam()
     {
-        try { _camOk = await JS.InvokeAsync<bool>("mediaGate.requestCam", "camPreview"); }
-        catch (Exception ex) { _error = ex.Message; }
-        StateHasChanged();
+        _error = null;
+        _requestingCam = true;
+
+        try
+        {
+            var loaded = await IsMediaGateLoadedAsync("requestCam");
+            if (!loaded)
+            {
+                _error = "Kamera modülü yüklenemedi. Sayfayı yenileyip tekrar deneyin.";
+                return;
+            }
+
+            _camOk = await JS.InvokeAsync<bool>("mediaGate.requestCam", "camPreview");
+        }
+        catch (Exception ex)
+        {
+            _camOk = false;
+            _error = GetFriendlyJsError(ex, "Kamera/mikrofon izni alınamadı.");
+        }
+        finally
+        {
+            _requestingCam = false;
+            StateHasChanged();
+        }
     }
 
     private async Task RequestScreen()
     {
-        try { _screenOk = await JS.InvokeAsync<bool>("mediaGate.requestScreen", "screenPreview"); }
-        catch (Exception ex) { _error = ex.Message; }
-        StateHasChanged();
+        _error = null;
+        _requestingScreen = true;
+
+        try
+        {
+            var loaded = await IsMediaGateLoadedAsync("requestScreen");
+            if (!loaded)
+            {
+                _error = "Ekran paylaşımı modülü yüklenemedi. Sayfayı yenileyip tekrar deneyin.";
+                return;
+            }
+
+            _screenOk = await JS.InvokeAsync<bool>("mediaGate.requestScreen", "screenPreview");
+        }
+        catch (Exception ex)
+        {
+            _screenOk = false;
+            _error = GetFriendlyJsError(ex, "Ekran paylaşımı izni alınamadı.");
+        }
+        finally
+        {
+            _requestingScreen = false;
+            StateHasChanged();
+        }
     }
 
     private async Task StartExam()
     {
-        if (!(_camOk && _screenOk)) return;
+        if (!(_camOk && _screenOk))
+        {
+            return;
+        }
+
+        _error = null;
+        _starting = true;
+
         try
         {
-            _starting = true; StateHasChanged();
+            StateHasChanged();
+
+            var mediaGateLoaded = await IsMediaGateLoadedAsync();
+            if (mediaGateLoaded)
+            {
+                await JS.InvokeVoidAsync("mediaGate.stopPreview", "camPreview");
+                await JS.InvokeVoidAsync("mediaGate.stopPreview", "screenPreview");
+            }
+
+            var result = await ExamSessionApp.StartByTokenAsync(Token);
+
+            Nav.NavigateTo($"/exam/runner/{result.Id}", forceLoad: false);
+        }
+        catch (Exception ex)
+        {
+            _starting = false;
+            _error = ex.Message;
+            StateHasChanged();
+        }
+    }
+
+    private async Task<bool> IsMediaGateLoadedAsync(string? functionName = null)
+    {
+        try
+        {
+            var script = string.IsNullOrWhiteSpace(functionName)
+                ? "typeof window.mediaGate !== 'undefined'"
+                : $"typeof window.mediaGate !== 'undefined' && typeof window.mediaGate.{functionName} === 'function'";
+
+            return await JS.InvokeAsync<bool>("eval", script);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private async Task StopPreviewSafelyAsync()
+    {
+        try
+        {
+            var mediaGateLoaded = await IsMediaGateLoadedAsync();
+            if (!mediaGateLoaded)
+            {
+                return;
+            }
 
             await JS.InvokeVoidAsync("mediaGate.stopPreview", "camPreview");
             await JS.InvokeVoidAsync("mediaGate.stopPreview", "screenPreview");
-
-            var res = await ExamSessionApp.StartByTokenAsync(Token);
-            Nav.NavigateTo($"/exam/runner/{res.Id}");
         }
-        catch (Exception ex) { _error = ex.Message; _starting = false; }
+        catch
+        {
+        }
+    }
+
+    private void ClearError()
+    {
+        _error = null;
+        StateHasChanged();
+    }
+
+    private string GetCamButtonText()
+    {
+        if (_requestingCam)
+        {
+            return "İzin bekleniyor...";
+        }
+
+        return _camOk ? "Kamera/Mikrofon Açık" : "Kamera/Mikrofon izni Ver";
+    }
+
+    private string GetScreenButtonText()
+    {
+        if (_requestingScreen)
+        {
+            return "İzin bekleniyor...";
+        }
+
+        return _screenOk ? "Ekran Paylaşımı Açık" : "Tüm Ekrana Erişim izni Ver";
+    }
+
+    private static string GetFriendlyJsError(Exception ex, string fallback)
+    {
+        var message = ex.Message;
+
+        if (message.Contains("Permission denied", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("NotAllowedError", StringComparison.OrdinalIgnoreCase))
+        {
+            return fallback + " Tarayıcı izni reddedildi.";
+        }
+
+        if (message.Contains("mediaGate", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("undefined", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Gerekli sınav medya modülü yüklenemedi. Sayfayı yenileyip tekrar deneyin.";
+        }
+
+        return $"{fallback} Detay: {message}";
     }
 
     public async ValueTask DisposeAsync()
     {
-        try
-        {
-            await JS.InvokeVoidAsync("mediaGate.stopPreview", "camPreview");
-            await JS.InvokeVoidAsync("mediaGate.stopPreview", "screenPreview");
-        }
-        catch { }
+        await StopPreviewSafelyAsync();
     }
 }

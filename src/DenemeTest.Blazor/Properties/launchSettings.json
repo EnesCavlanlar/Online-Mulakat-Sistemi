@@ -3,6 +3,8 @@
     "DenemeTest.Blazor": {
       "commandName": "Project",
       "dotnetRunMessages": true,
+      "launchBrowser": true,
+      "launchUrl": "admin/invitations",
       "applicationUrl": "https://localhost:44336;http://localhost:5213",
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development"

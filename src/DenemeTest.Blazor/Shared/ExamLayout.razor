@@ -22,19 +22,3 @@
         min-height: 100vh;
     }
 </style>
-
-<!-- ÖNEMLİ: examProctor JS mutlaka yüklensin ve öncelikli olsun -->
-<script src="/js/exam-media.js?v=4"></script>
-<script src="/js/examProctor.js?v=4"></script>
-<script src="/js/exam.js?v=4"></script>
-<script src="/js/recorder.js?v=4"></script>
-
-<script>
-    // Kapanış için tarafsız fallback (admin'e yönlendirme yok)
-    window.examRunner = window.examRunner || {
-      closeWindow: function () {
-        try { window.close(); } catch (e) {}
-        setTimeout(function () { try { window.location.href = "/exam/finished"; } catch (e) {} }, 1500);
-      }
-    };
-</script>

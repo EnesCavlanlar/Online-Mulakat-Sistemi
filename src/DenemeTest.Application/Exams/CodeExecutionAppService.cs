@@ -27,12 +27,15 @@ namespace DenemeTest.Application.Exams
         }
 
         /// <summary>
-        /// Kod + test-case input -> çalıştır -> output karşılaştır -> sonuçları döner.
+        /// Adayın gönderdiği C# kodunu ilgili sorunun test case'leri ile çalıştırır.
+        /// Her test case için output karşılaştırması yapar ve sonucu döner.
         /// </summary>
         public async Task<RunCodeResultDto> RunAsync(RunCodeRequestDto input)
         {
             if (input.QuestionId == Guid.Empty)
+            {
                 throw new UserFriendlyException("QuestionId boş olamaz.");
+            }
 
             if (string.IsNullOrWhiteSpace(input.Code))
             {
@@ -40,51 +43,88 @@ namespace DenemeTest.Application.Exams
                 {
                     Success = false,
                     Error = "Kod boş gönderildi.",
-                    ExitCode = 1
+                    ExitCode = 1,
+                    PassedCount = 0,
+                    TotalCount = 0,
+                    Output = "Kod boş gönderildi."
                 };
             }
 
-            // 1) Soru var mı?
-            var question = await _questionRepo.GetAsync(input.QuestionId);
-            if (question == null)
-                throw new UserFriendlyException("Soru bulunamadı.");
+            var language = NormalizeLanguage(input.Language);
 
-            // 2) Test caseleri çek
+            if (language != "csharp")
+            {
+                return new RunCodeResultDto
+                {
+                    Success = false,
+                    Error = "Şu anda sadece C# kodu çalıştırılabilir.",
+                    ExitCode = 1,
+                    PassedCount = 0,
+                    TotalCount = 0,
+                    Output = "Desteklenmeyen dil. Sadece C# desteklenmektedir."
+                };
+            }
+
+            await _questionRepo.GetAsync(input.QuestionId);
+
             var testCases = await _testCaseRepo.GetListAsync(x => x.QuestionId == input.QuestionId);
+
+            testCases = testCases
+                .OrderBy(x => x.CreationTime)
+                .ThenBy(x => x.Id)
+                .ToList();
+
             if (testCases.Count == 0)
             {
                 return new RunCodeResultDto
                 {
                     Success = false,
                     Error = "Bu soru için test-case tanımlı değil.",
-                    ExitCode = 1
+                    ExitCode = 1,
+                    PassedCount = 0,
+                    TotalCount = 0,
+                    Output = "Bu soru için test-case tanımlı değil."
                 };
             }
 
             var results = new List<TestCaseResultDto>();
 
-            // 3) Her test-case için kodu çalıştır
-            foreach (var tc in testCases)
+            foreach (var testCase in testCases)
             {
-                var execResult = await _codeRunner.RunAsync(new CodeRunnerInput
+                CodeRunnerResult execResult;
+
+                try
                 {
-                    Code = input.Code,
-                    Language = input.Language,
-                    InputText = tc.Input
-                });
+                    execResult = await _codeRunner.RunAsync(new CodeRunnerInput
+                    {
+                        Code = input.Code,
+                        Language = language,
+                        InputText = testCase.Input,
+                        TimeoutMilliseconds = 3000
+                    });
+                }
+                catch (Exception ex)
+                {
+                    execResult = new CodeRunnerResult
+                    {
+                        ExitCode = 1,
+                        Output = string.Empty,
+                        Error = "Kod çalıştırılırken beklenmeyen bir hata oluştu: " + ex.Message
+                    };
+                }
 
-                string std = (execResult.Output ?? string.Empty).Trim();
-                string expected = (tc.ExpectedOutput ?? string.Empty).Trim();
+                var actualOutput = NormalizeOutput(execResult.Output);
+                var expectedOutput = NormalizeOutput(testCase.ExpectedOutput);
 
-                bool isSuccess =
+                var isSuccess =
                     execResult.ExitCode == 0 &&
-                    string.Equals(std, expected, StringComparison.OrdinalIgnoreCase);
+                    string.Equals(actualOutput, expectedOutput, StringComparison.Ordinal);
 
                 results.Add(new TestCaseResultDto
                 {
-                    TestCaseId = tc.Id,
-                    Input = tc.Input,
-                    ExpectedOutput = tc.ExpectedOutput,
+                    TestCaseId = testCase.Id,
+                    Input = testCase.Input,
+                    ExpectedOutput = testCase.ExpectedOutput,
                     ActualOutput = execResult.Output,
                     Error = execResult.Error,
                     ExitCode = execResult.ExitCode,
@@ -92,28 +132,66 @@ namespace DenemeTest.Application.Exams
                 });
             }
 
-            // 4) Final başarı oranı
-            int passed = results.Count(x => x.IsSuccess);
-            int total = results.Count;
+            var passed = results.Count(x => x.IsSuccess);
+            var total = results.Count;
+            var allPassed = passed == total;
 
-            // Eski UI Output alanını beslemek için kısa özet string üretelim
-            var lines = results
-                .Select((r, index) =>
-                    $"#{index + 1} - {(r.IsSuccess ? "GEÇTİ" : "KALDI")} | Input: {r.Input}");
+            var summaryLines = results.Select((result, index) =>
+            {
+                var status = result.IsSuccess ? "GEÇTİ" : "KALDI";
+                var errorPart = string.IsNullOrWhiteSpace(result.Error)
+                    ? string.Empty
+                    : $" | Hata: {result.Error}";
 
-            var summaryText = $"Sonuç: {passed}/{total} test geçti.{Environment.NewLine}" +
-                              string.Join(Environment.NewLine, lines);
+                return $"#{index + 1} - {status} | Input: {result.Input} | Beklenen: {result.ExpectedOutput} | Gelen: {result.ActualOutput}{errorPart}";
+            });
+
+            var summaryText =
+                $"Sonuç: {passed}/{total} test geçti." +
+                Environment.NewLine +
+                string.Join(Environment.NewLine, summaryLines);
 
             return new RunCodeResultDto
             {
-                Success = passed == total,
-                ExitCode = passed == total ? 0 : 1,
+                Success = allPassed,
+                ExitCode = allPassed ? 0 : 1,
                 TestCases = results,
                 PassedCount = passed,
                 TotalCount = total,
                 Output = summaryText,
-                Error = null
+                Error = allPassed ? null : "Kod bazı test case'lerden geçemedi."
             };
+        }
+
+        private static string NormalizeLanguage(string? language)
+        {
+            if (string.IsNullOrWhiteSpace(language))
+            {
+                return "csharp";
+            }
+
+            var normalized = language.Trim().ToLowerInvariant();
+
+            return normalized switch
+            {
+                "c#" => "csharp",
+                "cs" => "csharp",
+                "csharp" => "csharp",
+                _ => normalized
+            };
+        }
+
+        private static string NormalizeOutput(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return string.Empty;
+            }
+
+            return value
+                .Replace("\r\n", "\n")
+                .Replace("\r", "\n")
+                .Trim();
         }
     }
 }
