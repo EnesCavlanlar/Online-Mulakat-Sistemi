@@ -1,8 +1,19 @@
 ﻿@page "/admin/candidates"
 @using DenemeTest.Exams.Dtos
 @inject DenemeTest.Application.Exams.ICandidateAppService CandidateApp
+@inject IJSRuntime JS
 
 <h3>Adaylar</h3>
+
+@if (!string.IsNullOrWhiteSpace(_errorMessage))
+{
+    <div class="alert alert-danger">@_errorMessage</div>
+}
+
+@if (!string.IsNullOrWhiteSpace(_successMessage))
+{
+    <div class="alert alert-success">@_successMessage</div>
+}
 
 @if (_loading)
 {
@@ -12,32 +23,47 @@ else
 {
     <div class="d-flex gap-2 mb-3">
         <button class="btn btn-primary" @onclick="NewCandidate">Yeni Aday</button>
+        <button class="btn btn-outline-secondary" @onclick="LoadData">Yenile</button>
     </div>
 
-    <table class="table table-striped">
-        <thead>
-            <tr>
-                <th>Ad</th>
-                <th>Soyad</th>
-                <th>E-posta</th>
-                <th style="width:120px"></th>
-            </tr>
-        </thead>
-        <tbody>
-            @foreach (var c in _items)
-            {
+    @if (_items.Count == 0)
+    {
+        <div class="alert alert-info">Henüz aday bulunmuyor.</div>
+    }
+    else
+    {
+        <table class="table table-striped align-middle">
+            <thead>
                 <tr>
-                    <td>@c.FirstName</td>
-                    <td>@c.LastName</td>
-                    <td>@c.Email</td>
-                    <td>
-                        <button class="btn btn-sm btn-outline-secondary me-2" @onclick="() => Edit(c)">Düzenle</button>
-                        <button class="btn btn-sm btn-outline-danger" @onclick="() => Delete(c.Id)">Sil</button>
-                    </td>
+                    <th>Ad</th>
+                    <th>Soyad</th>
+                    <th>E-posta</th>
+                    <th style="width:190px">İşlemler</th>
                 </tr>
-            }
-        </tbody>
-    </table>
+            </thead>
+            <tbody>
+                @foreach (var c in _items)
+                {
+                    <tr>
+                        <td>@c.FirstName</td>
+                        <td>@c.LastName</td>
+                        <td>@c.Email</td>
+                        <td>
+                            <button class="btn btn-sm btn-outline-secondary me-2"
+                                    @onclick="() => Edit(c)">
+                                Düzenle
+                            </button>
+
+                            <button class="btn btn-sm btn-outline-danger"
+                                    @onclick="() => Delete(c)">
+                                Sil
+                            </button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
 }
 
 @if (_showModal)
@@ -49,23 +75,32 @@ else
                     <h5 class="modal-title">@(_editId == null ? "Yeni Aday" : "Aday Düzenle")</h5>
                     <button type="button" class="btn-close" @onclick="CloseModal"></button>
                 </div>
+
                 <div class="modal-body">
                     <div class="mb-2">
                         <label class="form-label">Ad</label>
                         <input class="form-control" @bind="_form.FirstName" />
                     </div>
+
                     <div class="mb-2">
                         <label class="form-label">Soyad</label>
                         <input class="form-control" @bind="_form.LastName" />
                     </div>
+
                     <div class="mb-2">
                         <label class="form-label">E-posta</label>
                         <input class="form-control" @bind="_form.Email" />
                     </div>
                 </div>
+
                 <div class="modal-footer">
                     <button class="btn btn-secondary" @onclick="CloseModal">Kapat</button>
-                    <button class="btn btn-primary" @onclick="Save">Kaydet</button>
+
+                    <button class="btn btn-primary"
+                            @onclick="Save"
+                            disabled="@_saving">
+                        @(_saving ? "Kaydediliyor..." : "Kaydet")
+                    </button>
                 </div>
             </div>
         </div>
@@ -74,11 +109,16 @@ else
 
 @code {
     private bool _loading = true;
+    private bool _saving = false;
+
     private List<CandidateDto> _items = new();
 
     private bool _showModal = false;
     private Guid? _editId;
     private CreateUpdateCandidateDto _form = new();
+
+    private string? _errorMessage;
+    private string? _successMessage;
 
     protected override async Task OnInitializedAsync()
     {
@@ -88,13 +128,33 @@ else
     private async Task LoadData()
     {
         _loading = true;
-        var list = await CandidateApp.GetListAsync(new Volo.Abp.Application.Dtos.PagedAndSortedResultRequestDto());
-        _items = list.Items.ToList();
-        _loading = false;
+        _errorMessage = null;
+
+        try
+        {
+            var list = await CandidateApp.GetListAsync(new Volo.Abp.Application.Dtos.PagedAndSortedResultRequestDto
+            {
+                MaxResultCount = 1000
+            });
+
+            _items = list.Items.ToList();
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+            StateHasChanged();
+        }
     }
 
     private void NewCandidate()
     {
+        _errorMessage = null;
+        _successMessage = null;
+
         _editId = null;
         _form = new CreateUpdateCandidateDto();
         _showModal = true;
@@ -102,6 +162,9 @@ else
 
     private void Edit(CandidateDto dto)
     {
+        _errorMessage = null;
+        _successMessage = null;
+
         _editId = dto.Id;
         _form = new CreateUpdateCandidateDto
         {
@@ -109,34 +172,74 @@ else
             LastName = dto.LastName,
             Email = dto.Email
         };
+
         _showModal = true;
     }
 
-    private async Task Delete(Guid id)
+    private async Task Delete(CandidateDto candidate)
     {
-        if (!await JsConfirm("Silmek istediğine emin misin?")) return;
-        await CandidateApp.DeleteAsync(id);
-        await LoadData();
-        StateHasChanged();
+        _errorMessage = null;
+        _successMessage = null;
+
+        var fullName = $"{candidate.FirstName} {candidate.LastName}".Trim();
+
+        var confirmed = await JS.InvokeAsync<bool>(
+            "confirm",
+            $"{fullName} adlı adayı silmek istediğine emin misin? Bu adaya bağlı davetler, sınav kayıtları, cevaplar, skorlar ve proctoring kayıtları da silinecek."
+        );
+
+        if (!confirmed)
+        {
+            return;
+        }
+
+        try
+        {
+            await CandidateApp.DeleteAsync(candidate.Id);
+            _successMessage = "Aday ve bağlı kayıtları silindi.";
+            await LoadData();
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = ex.Message;
+        }
     }
 
     private async Task Save()
     {
-        if (_editId == null)
-            await CandidateApp.CreateAsync(_form);
-        else
-            await CandidateApp.UpdateAsync(_editId.Value, _form);
+        _errorMessage = null;
+        _successMessage = null;
+        _saving = true;
 
-        _showModal = false;
-        await LoadData();
-        StateHasChanged();
+        try
+        {
+            if (_editId == null)
+            {
+                await CandidateApp.CreateAsync(_form);
+                _successMessage = "Aday oluşturuldu.";
+            }
+            else
+            {
+                await CandidateApp.UpdateAsync(_editId.Value, _form);
+                _successMessage = "Aday güncellendi.";
+            }
+
+            _showModal = false;
+            await LoadData();
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+            StateHasChanged();
+        }
     }
 
-    private void CloseModal() => _showModal = false;
-
-    private async Task<bool> JsConfirm(string message)
+    private void CloseModal()
     {
-        await Task.CompletedTask;
-        return true;
+        _showModal = false;
     }
 }

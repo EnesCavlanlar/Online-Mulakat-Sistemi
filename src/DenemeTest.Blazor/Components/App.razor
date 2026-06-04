@@ -4,6 +4,7 @@
 @using Volo.Abp.Localization
 @using Volo.Abp.AspNetCore.Components.Web.Theming.Bundling
 @inject IHostEnvironment Env
+
 @{
     var rtl = CultureHelper.IsRtl ? "rtl" : string.Empty;
 }
@@ -36,30 +37,76 @@
         {
             <text>An error has occurred. This application may no longer respond until reloaded.</text>
         }
+
         <a href="" class="reload">Reload</a>
         <a class="dismiss">🗙</a>
     </div>
 
     <AbpScripts BundleName="@BlazorLeptonXLiteThemeBundles.Scripts.Global" />
 
-    <!-- Exam scripts: Blazor başlamadan önce global olarak yüklenmeli -->
-    <script src="/js/exam-media.js?v=10"></script>
-    <script src="/js/examProctor.js?v=10"></script>
-    <script src="/js/exam.js?v=10"></script>
-    <script src="/js/recorder.js?v=10"></script>
+    <script src="/js/exam-media.js?v=12"></script>
+    <script src="/js/examProctor.js?v=12"></script>
+    <script src="/js/recorder.js?v=12"></script>
+    <script src="/js/codeEditor.js?v=1"></script>
 
     <script>
         window.examRunner = window.examRunner || {
             closeWindow: function () {
                 try {
                     window.close();
-                } catch (e) { }
+                } catch (e) {
+                }
 
                 setTimeout(function () {
                     try {
                         window.location.href = "/exam/finished";
-                    } catch (e) { }
+                    } catch (e) {
+                    }
                 }, 1500);
+            }
+        };
+
+        window.checkExamModules = function () {
+            return {
+                mediaGateLoaded: !!window.mediaGate,
+                requestCamLoaded: !!(window.mediaGate && typeof window.mediaGate.requestCam === "function"),
+                requestScreenLoaded: !!(window.mediaGate && typeof window.mediaGate.requestScreen === "function"),
+                stopPreviewLoaded: !!(window.mediaGate && typeof window.mediaGate.stopPreview === "function"),
+
+                examProctorLoaded: !!window.examProctor,
+                startProctorLoaded: !!(window.examProctor && typeof window.examProctor.start === "function"),
+                stopProctorLoaded: !!(window.examProctor && typeof window.examProctor.stop === "function"),
+
+                examRecorderLoaded: !!window.examRecorder,
+                startRecorderLoaded: !!(window.examRecorder && typeof window.examRecorder.start === "function"),
+                stopRecorderLoaded: !!(window.examRecorder && typeof window.examRecorder.stop === "function")
+            };
+        };
+
+        window.forceStopExamMedia = function () {
+            try {
+                if (window.examRecorder && typeof window.examRecorder.stop === "function") {
+                    window.examRecorder.stop();
+                }
+            } catch (e) {
+                console.warn("examRecorder stop error", e);
+            }
+
+            try {
+                if (window.examProctor && typeof window.examProctor.stop === "function") {
+                    window.examProctor.stop();
+                }
+            } catch (e) {
+                console.warn("examProctor stop error", e);
+            }
+
+            try {
+                if (window.mediaGate && typeof window.mediaGate.stopPreview === "function") {
+                    window.mediaGate.stopPreview("camPreview");
+                    window.mediaGate.stopPreview("screenPreview");
+                }
+            } catch (e) {
+                console.warn("mediaGate stopPreview error", e);
             }
         };
     </script>

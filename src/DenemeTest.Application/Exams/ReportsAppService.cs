@@ -1,20 +1,25 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
-using System.Collections.Generic;
 using DenemeTest.Exams;
 using DenemeTest.Exams.Dtos;
 using DenemeTest.Permissions;
 using Microsoft.AspNetCore.Authorization;
+using Volo.Abp;
 using Volo.Abp.Application.Services;
 using Volo.Abp.Domain.Repositories;
+using Volo.Abp.Uow;
 
 namespace DenemeTest.Application.Exams
 {
     public interface IReportsAppService
     {
         Task<LeaderboardItemDto[]> GetLeaderboardAsync(int take);
+
         Task<SessionDetailDto> GetSessionDetailAsync(Guid sessionId);
+
+        Task DeleteSessionAsync(Guid sessionId);
     }
 
     [Authorize(DenemeTestPermissions.Exams.Reports)]
@@ -26,6 +31,7 @@ namespace DenemeTest.Application.Exams
         private readonly IRepository<Answer, Guid> _answerRepo;
         private readonly IRepository<Question, Guid> _questionRepo;
         private readonly IRepository<QuestionOption, Guid> _optionRepo;
+        private readonly IRepository<ProctoringEvent, Guid> _proctoringEventRepo;
 
         public ReportsAppService(
             IRepository<Score, Guid> scoreRepo,
@@ -33,7 +39,8 @@ namespace DenemeTest.Application.Exams
             IRepository<Candidate, Guid> candidateRepo,
             IRepository<Answer, Guid> answerRepo,
             IRepository<Question, Guid> questionRepo,
-            IRepository<QuestionOption, Guid> optionRepo)
+            IRepository<QuestionOption, Guid> optionRepo,
+            IRepository<ProctoringEvent, Guid> proctoringEventRepo)
         {
             _scoreRepo = scoreRepo;
             _sessionRepo = sessionRepo;
@@ -41,16 +48,19 @@ namespace DenemeTest.Application.Exams
             _answerRepo = answerRepo;
             _questionRepo = questionRepo;
             _optionRepo = optionRepo;
+            _proctoringEventRepo = proctoringEventRepo;
         }
 
         // -------------------- LEADERBOARD --------------------
 
         public async Task<LeaderboardItemDto[]> GetLeaderboardAsync(int take)
         {
+            var safeTake = Math.Max(1, take);
+
             var scores = (await _scoreRepo.GetListAsync())
-                .OrderByDescending(s => s.Value)
-                .ThenBy(s => s.CreationTime)
-                .Take(Math.Max(1, take))
+                .OrderByDescending(score => score.Value)
+                .ThenBy(score => score.CreationTime)
+                .Take(safeTake)
                 .ToList();
 
             if (!scores.Any())
@@ -58,44 +68,65 @@ namespace DenemeTest.Application.Exams
                 return Array.Empty<LeaderboardItemDto>();
             }
 
-            var sessionIds = scores.Select(s => s.ExamSessionId).Distinct().ToList();
-            var sessions = await _sessionRepo.GetListAsync(x => sessionIds.Contains(x.Id));
+            var sessionIds = scores
+                .Select(score => score.ExamSessionId)
+                .Distinct()
+                .ToList();
 
-            var candidateIds = sessions.Select(s => s.CandidateId).Distinct().ToList();
-            var candidates = await _candidateRepo.GetListAsync(x => candidateIds.Contains(x.Id));
+            var sessions = await _sessionRepo.GetListAsync(session =>
+                sessionIds.Contains(session.Id));
 
-            var query =
-                from sc in scores
-                join se in sessions on sc.ExamSessionId equals se.Id
-                join ca in candidates on se.CandidateId equals ca.Id
+            if (!sessions.Any())
+            {
+                return Array.Empty<LeaderboardItemDto>();
+            }
+
+            var candidateIds = sessions
+                .Select(session => session.CandidateId)
+                .Distinct()
+                .ToList();
+
+            var candidates = await _candidateRepo.GetListAsync(candidate =>
+                candidateIds.Contains(candidate.Id));
+
+            var result =
+                from score in scores
+                join session in sessions on score.ExamSessionId equals session.Id
+                join candidate in candidates on session.CandidateId equals candidate.Id
                 select new LeaderboardItemDto
                 {
-                    CandidateId = ca.Id,
-                    FirstName = ca.FirstName,
-                    LastName = ca.LastName,
-                    Email = ca.Email,
-                    Score = sc.Value,
-                    ExamSessionId = se.Id,
+                    CandidateId = candidate.Id,
+                    FirstName = candidate.FirstName,
+                    LastName = candidate.LastName,
+                    Email = candidate.Email,
 
-                    // 🔽 yeni alanlar: oturum durumu + proctoring
-                    IsCancelled = se.IsCancelled,
-                    FinishedAt = se.FinishedAt,
-                    ViolationCount = se.ViolationCount
+                    Score = score.Value,
+                    ExamSessionId = session.Id,
+
+                    IsCancelled = session.IsCancelled,
+                    FinishedAt = session.FinishedAt,
+                    ViolationCount = session.ViolationCount
                 };
 
-            return query.ToArray();
+            return result.ToArray();
         }
 
         // -------------------- SESSION DETAY --------------------
 
         public async Task<SessionDetailDto> GetSessionDetailAsync(Guid sessionId)
         {
+            if (sessionId == Guid.Empty)
+            {
+                throw new UserFriendlyException("Oturum bilgisi geçersiz.");
+            }
+
             var session = await _sessionRepo.GetAsync(sessionId);
             var candidate = await _candidateRepo.GetAsync(session.CandidateId);
 
             var dto = new SessionDetailDto
             {
                 SessionId = session.Id,
+
                 CandidateId = candidate.Id,
                 CandidateFirstName = candidate.FirstName,
                 CandidateLastName = candidate.LastName,
@@ -109,58 +140,127 @@ namespace DenemeTest.Application.Exams
                 CancelReason = session.CancelReason
             };
 
-            var answers = await _answerRepo.GetListAsync(a => a.ExamSessionId == sessionId);
-            var qIds = answers.Select(a => a.QuestionId).Distinct().ToList();
-            var questions = await _questionRepo.GetListAsync(q => qIds.Contains(q.Id));
-            var options = await _optionRepo.GetListAsync(o => qIds.Contains(o.QuestionId));
+            var answers = await _answerRepo.GetListAsync(answer =>
+                answer.ExamSessionId == sessionId);
 
-            foreach (var ans in answers)
+            if (!answers.Any())
             {
-                var q = questions.First(x => x.Id == ans.QuestionId);
+                return dto;
+            }
+
+            var questionIds = answers
+                .Select(answer => answer.QuestionId)
+                .Distinct()
+                .ToList();
+
+            var questions = await _questionRepo.GetListAsync(question =>
+                questionIds.Contains(question.Id));
+
+            var options = await _optionRepo.GetListAsync(option =>
+                questionIds.Contains(option.QuestionId));
+
+            foreach (var answer in answers)
+            {
+                var question = questions.FirstOrDefault(questionItem =>
+                    questionItem.Id == answer.QuestionId);
+
+                if (question == null)
+                {
+                    continue;
+                }
 
                 List<string>? selectedOptionTexts = null;
-                if (ans.SelectedOptionIds != null && ans.SelectedOptionIds.Any())
+
+                if (answer.SelectedOptionIds != null && answer.SelectedOptionIds.Any())
                 {
-                    var set = ans.SelectedOptionIds.ToHashSet();
+                    var selectedOptionIdSet = answer.SelectedOptionIds.ToHashSet();
+
                     selectedOptionTexts = options
-                        .Where(o => o.QuestionId == q.Id && set.Contains(o.Id))
-                        .Select(o => o.Text)
+                        .Where(option =>
+                            option.QuestionId == question.Id &&
+                            selectedOptionIdSet.Contains(option.Id))
+                        .Select(option => option.Text)
                         .ToList();
                 }
 
                 dto.Answers.Add(new QuestionAnswerDetailDto
                 {
-                    QuestionId = q.Id,
-                    QuestionText = q.Text,
-                    QuestionType = q.Type.ToString(),
+                    QuestionId = question.Id,
+                    QuestionText = question.Text,
+                    QuestionType = question.Type.ToString(),
+
                     SelectedOptions = selectedOptionTexts,
-                    TextAnswer = ans.TextAnswer,
-                    // Answer entity'de alan olmadığı için şimdilik null geçiyoruz
+                    TextAnswer = answer.TextAnswer,
+
                     CodeOutput = null
                 });
             }
 
             return dto;
         }
+
+        // -------------------- SESSION SİL --------------------
+
+        [UnitOfWork]
+        public async Task DeleteSessionAsync(Guid sessionId)
+        {
+            if (sessionId == Guid.Empty)
+            {
+                throw new UserFriendlyException("Silinecek sınav oturumu bulunamadı.");
+            }
+
+            var session = await _sessionRepo.GetAsync(sessionId);
+
+            var answers = await _answerRepo.GetListAsync(answer =>
+                answer.ExamSessionId == sessionId);
+
+            foreach (var answer in answers)
+            {
+                await _answerRepo.DeleteAsync(answer, autoSave: false);
+            }
+
+            var proctoringEvents = await _proctoringEventRepo.GetListAsync(proctoringEvent =>
+                proctoringEvent.ExamSessionId == sessionId);
+
+            foreach (var proctoringEvent in proctoringEvents)
+            {
+                await _proctoringEventRepo.DeleteAsync(proctoringEvent, autoSave: false);
+            }
+
+            var scores = await _scoreRepo.GetListAsync(score =>
+                score.ExamSessionId == sessionId);
+
+            foreach (var score in scores)
+            {
+                await _scoreRepo.DeleteAsync(score, autoSave: false);
+            }
+
+            await _sessionRepo.DeleteAsync(session, autoSave: true);
+        }
     }
 
-    // ====== PUBLIC DTO’lar (Application katmanında) ======
+    // -------------------- DTO'LAR --------------------
 
     public class SessionDetailDto
     {
         public Guid SessionId { get; set; }
 
         public Guid CandidateId { get; set; }
-        public string CandidateFirstName { get; set; } = default!;
-        public string CandidateLastName { get; set; } = default!;
-        public string CandidateEmail { get; set; } = default!;
+
+        public string CandidateFirstName { get; set; } = string.Empty;
+
+        public string CandidateLastName { get; set; } = string.Empty;
+
+        public string CandidateEmail { get; set; } = string.Empty;
 
         public DateTime? StartTime { get; set; }
+
         public DateTime? EndTime { get; set; }
 
         public int Violations { get; set; }
 
         public bool IsCancelled { get; set; }
+
         public string? CancelReason { get; set; }
 
         public List<QuestionAnswerDetailDto> Answers { get; set; } = new();
@@ -169,11 +269,15 @@ namespace DenemeTest.Application.Exams
     public class QuestionAnswerDetailDto
     {
         public Guid QuestionId { get; set; }
-        public string QuestionText { get; set; } = default!;
-        public string QuestionType { get; set; } = default!; // "MultipleChoice/Classic/Coding"
 
-        public List<string>? SelectedOptions { get; set; }  // MCQ için seçilen şık metinleri
-        public string? TextAnswer { get; set; }             // Classic için text
-        public string? CodeOutput { get; set; }             // Coding için son çalışma çıktısı (yoksa null)
+        public string QuestionText { get; set; } = string.Empty;
+
+        public string QuestionType { get; set; } = string.Empty;
+
+        public List<string>? SelectedOptions { get; set; }
+
+        public string? TextAnswer { get; set; }
+
+        public string? CodeOutput { get; set; }
     }
 }

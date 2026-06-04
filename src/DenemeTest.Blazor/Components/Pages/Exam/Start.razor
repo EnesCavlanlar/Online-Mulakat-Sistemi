@@ -110,6 +110,8 @@ else
     private bool _requestingCam;
     private bool _requestingScreen;
 
+    private bool _handoffToRunner;
+
     private async Task RequestCam()
     {
         _error = null;
@@ -168,7 +170,7 @@ else
 
     private async Task StartExam()
     {
-        if (!(_camOk && _screenOk))
+        if (!(_camOk && _screenOk) || _starting)
         {
             return;
         }
@@ -180,21 +182,17 @@ else
         {
             StateHasChanged();
 
-            var mediaGateLoaded = await IsMediaGateLoadedAsync();
-            if (mediaGateLoaded)
-            {
-                await JS.InvokeVoidAsync("mediaGate.stopPreview", "camPreview");
-                await JS.InvokeVoidAsync("mediaGate.stopPreview", "screenPreview");
-            }
-
             var result = await ExamSessionApp.StartByTokenAsync(Token);
+
+            _handoffToRunner = true;
 
             Nav.NavigateTo($"/exam/runner/{result.Id}", forceLoad: false);
         }
         catch (Exception ex)
         {
             _starting = false;
-            _error = ex.Message;
+            _handoffToRunner = false;
+            _error = GetFriendlyServerError(ex);
             StateHasChanged();
         }
     }
@@ -217,6 +215,11 @@ else
 
     private async Task StopPreviewSafelyAsync()
     {
+        if (_handoffToRunner)
+        {
+            return;
+        }
+
         try
         {
             var mediaGateLoaded = await IsMediaGateLoadedAsync();
@@ -276,6 +279,36 @@ else
         }
 
         return $"{fallback} Detay: {message}";
+    }
+
+    private static string GetFriendlyServerError(Exception ex)
+    {
+        var message = ex.Message;
+
+        if (message.Contains("zaten kullanılmış", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("AlreadyUsed", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Bu sınav bağlantısı daha önce kullanılmış. Aynı link ile tekrar sınava girilemez.";
+        }
+
+        if (message.Contains("Davet bulunamadı", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("NotFound", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Davet bağlantısı geçersiz.";
+        }
+
+        if (message.Contains("süresi geçmiş", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("Expired", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Davet bağlantısının süresi geçmiş.";
+        }
+
+        if (message.Contains("aktif bir oturum var", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Bu test için zaten aktif bir oturum var. Aynı davetle ikinci kez giriş yapılamaz.";
+        }
+
+        return message;
     }
 
     public async ValueTask DisposeAsync()

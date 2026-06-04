@@ -8,6 +8,7 @@ using Microsoft.Extensions.Configuration;
 using Volo.Abp;
 using Volo.Abp.Application.Services;
 using Volo.Abp.Domain.Repositories;
+using Volo.Abp.Uow;
 
 namespace DenemeTest.Application.Exams;
 
@@ -35,6 +36,7 @@ public class ExamSessionAppService : ApplicationService, IExamSessionAppService
 
     // -------------------- TOKEN İLE OTURUM BAŞLAT --------------------
 
+    [UnitOfWork]
     public async Task<StartByTokenResultDto> StartByTokenAsync(string token)
     {
         if (string.IsNullOrWhiteSpace(token))
@@ -44,132 +46,178 @@ public class ExamSessionAppService : ApplicationService, IExamSessionAppService
 
         var tokenHash = HashToken(token);
 
-        var inv = await _invRepo.FirstOrDefaultAsync(x => x.TokenHash == tokenHash);
-        if (inv == null)
+        var invitation = await _invRepo.FirstOrDefaultAsync(x => x.TokenHash == tokenHash);
+        if (invitation == null)
         {
             throw new UserFriendlyException("Davet bulunamadı.");
         }
 
-        if (inv.IsUsed)
+        if (invitation.IsUsed)
         {
-            throw new UserFriendlyException("Bu davet zaten kullanılmış.");
+            throw new UserFriendlyException("Bu davet zaten kullanılmış. Aynı link ile tekrar sınava girilemez.");
         }
 
-        if (inv.ExpireAt <= DateTime.UtcNow)
+        if (invitation.ExpireAt <= DateTime.UtcNow)
         {
             throw new UserFriendlyException("Davetin süresi geçmiş.");
         }
 
-        // Aynı aday + aynı test için bitmemiş/iptal edilmemiş tek aktif oturum kuralı
-        var alreadyActive = await _sessionRepo.FirstOrDefaultAsync(s =>
-            s.TestId == inv.TestId &&
-            s.CandidateId == inv.CandidateId &&
-            !s.IsCancelled &&
-            s.FinishedAt == null
+        var alreadyActiveSession = await _sessionRepo.FirstOrDefaultAsync(session =>
+            session.TestId == invitation.TestId &&
+            session.CandidateId == invitation.CandidateId &&
+            !session.IsCancelled &&
+            session.FinishedAt == null
         );
 
-        if (alreadyActive != null)
+        if (alreadyActiveSession != null)
         {
-            throw new UserFriendlyException("Bu test için zaten aktif bir oturum var.");
+            invitation.MarkUsed();
+            await _invRepo.UpdateAsync(invitation, autoSave: true);
+
+            throw new UserFriendlyException("Bu test için zaten aktif bir oturum var. Aynı davetle ikinci kez giriş yapılamaz.");
         }
 
-        var session = new ExamSession(
+        invitation.MarkUsed();
+        await _invRepo.UpdateAsync(invitation, autoSave: true);
+
+        var examSession = new ExamSession(
             GuidGenerator.Create(),
-            inv.TestId,
-            inv.CandidateId,
+            invitation.TestId,
+            invitation.CandidateId,
             Clock.Now
         );
 
-        await _sessionRepo.InsertAsync(session, autoSave: true);
-
-        // Token tek kullanımlık
-        inv.MarkUsed();
-        await _invRepo.UpdateAsync(inv, autoSave: true);
+        await _sessionRepo.InsertAsync(examSession, autoSave: true);
 
         return new StartByTokenResultDto
         {
-            Id = session.Id,
-            TestId = inv.TestId,
-            CandidateId = inv.CandidateId,
-            CandidateName = ""
+            Id = examSession.Id,
+            TestId = invitation.TestId,
+            CandidateId = invitation.CandidateId,
+            CandidateName = string.Empty
         };
     }
 
     // -------------------- PROCTORING EVENT / İHLAL KAYDI --------------------
 
+    [UnitOfWork]
     public async Task RecordEventAsync(Guid sessionId, ProctoringEventType type, string? detail)
     {
         var session = await _sessionRepo.GetAsync(sessionId);
 
-        var ev = new ProctoringEvent(GuidGenerator.Create(), sessionId, type, detail);
-        await _eventRepo.InsertAsync(ev, autoSave: true);
+        if (session.IsCancelled || session.FinishedAt != null)
+        {
+            return;
+        }
 
-        // Basit kural: her event ihlal sayılır
+        var proctoringEvent = new ProctoringEvent(
+            GuidGenerator.Create(),
+            sessionId,
+            type,
+            detail
+        );
+
+        await _eventRepo.InsertAsync(proctoringEvent, autoSave: true);
+
         session.RegisterViolation();
 
-        var max = GetMaxViolations();
-        if (!session.IsCancelled && session.ViolationCount >= max)
+        var maxViolationCount = GetMaxViolations();
+
+        if (!session.IsCancelled && session.ViolationCount >= maxViolationCount)
         {
-            session.Cancel($"Proctoring limiti aşıldı ({session.ViolationCount}/{max}).");
+            session.Cancel($"Proctoring limiti aşıldı ({session.ViolationCount}/{maxViolationCount}).");
         }
 
         await _sessionRepo.UpdateAsync(session, autoSave: true);
     }
 
-    // -------------------- OTURUM İPTAL / BİTİR --------------------
+    // -------------------- OTURUM İPTAL --------------------
 
+    [UnitOfWork]
     public async Task CancelAsync(Guid sessionId, string reason)
     {
         var session = await _sessionRepo.GetAsync(sessionId);
 
-        if (!session.IsCancelled && session.FinishedAt == null)
+        if (session.IsCancelled || session.FinishedAt != null)
         {
-            session.Cancel(reason);
-            await _sessionRepo.UpdateAsync(session, autoSave: true);
+            return;
         }
+
+        session.Cancel(string.IsNullOrWhiteSpace(reason)
+            ? "Sınav iptal edildi."
+            : reason);
+
+        await _sessionRepo.UpdateAsync(session, autoSave: true);
     }
 
+    // -------------------- OTURUM BİTİR --------------------
+
+    [UnitOfWork]
     public async Task FinishAsync(Guid sessionId, int? scoreValue = null, string? scoreNote = null)
     {
         var session = await _sessionRepo.GetAsync(sessionId);
 
-        if (!session.IsCancelled && session.FinishedAt == null)
+        if (session.IsCancelled)
+        {
+            return;
+        }
+
+        if (session.FinishedAt == null)
         {
             session.Finish(Clock.Now);
             await _sessionRepo.UpdateAsync(session, autoSave: true);
         }
 
-        if (scoreValue.HasValue)
+        if (!scoreValue.HasValue)
         {
-            var existing = await _scoreRepo.FirstOrDefaultAsync(x => x.ExamSessionId == sessionId);
-            if (existing != null)
-            {
-                await _scoreRepo.DeleteAsync(existing, autoSave: true);
-            }
-
-            var score = new Score(
-                GuidGenerator.Create(),
-                sessionId,
-                scoreValue.Value,
-                scoreNote
-            );
-
-            await _scoreRepo.InsertAsync(score, autoSave: true);
+            return;
         }
+
+        var normalizedScore = NormalizeScore(scoreValue.Value);
+
+        var existingScore = await _scoreRepo.FirstOrDefaultAsync(x => x.ExamSessionId == sessionId);
+        if (existingScore != null)
+        {
+            await _scoreRepo.DeleteAsync(existingScore, autoSave: true);
+        }
+
+        var score = new Score(
+            GuidGenerator.Create(),
+            sessionId,
+            normalizedScore,
+            scoreNote
+        );
+
+        await _scoreRepo.InsertAsync(score, autoSave: true);
     }
 
     // -------------------- HELPERS --------------------
 
     private int GetMaxViolations()
     {
-        var str = _config["Exam:MaxViolations"];
+        var valueFromConfig = _config["Exam:MaxViolations"];
 
-        if (int.TryParse(str, out var value) && value > 0)
+        if (int.TryParse(valueFromConfig, out var value) && value > 0)
         {
             return value;
         }
 
         return 2;
+    }
+
+    private static int NormalizeScore(int score)
+    {
+        if (score < 0)
+        {
+            return 0;
+        }
+
+        if (score > 100)
+        {
+            return 100;
+        }
+
+        return score;
     }
 
     private static string HashToken(string rawToken)
@@ -182,7 +230,10 @@ public class ExamSessionAppService : ApplicationService, IExamSessionAppService
 public interface IExamSessionAppService
 {
     Task<StartByTokenResultDto> StartByTokenAsync(string token);
+
     Task RecordEventAsync(Guid sessionId, ProctoringEventType type, string? detail);
+
     Task CancelAsync(Guid sessionId, string reason);
+
     Task FinishAsync(Guid sessionId, int? scoreValue = null, string? scoreNote = null);
 }

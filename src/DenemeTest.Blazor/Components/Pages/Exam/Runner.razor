@@ -14,6 +14,7 @@
 
 <h3 class="d-flex justify-content-between align-items-center">
     <span>@(_test?.TestName ?? "Sınav")</span>
+
     @if (_remainingSeconds > 0)
     {
         <span class="badge bg-info text-dark">
@@ -36,15 +37,14 @@ else if (_finished)
         @if (_finishedByTimeout)
         {
             <span>Süreniz dolduğu için sınav otomatik olarak tamamlandı.</span>
-    
             <br />
         }
         else
         {
             <span>Sınavı başarıyla tamamladınız.</span>
-    
             <br />
         }
+
         Puanın: <strong>@_finalScore</strong><br />
         Bu pencere birazdan kapanacaktır. Teşekkürler.
     </div>
@@ -78,6 +78,7 @@ else
                                        type="checkbox"
                                        checked="@IsOptionSelected(CurrentQuestion.Id, opt.Id)"
                                        @onchange="(ChangeEventArgs e) => ToggleOption(CurrentQuestion.Id, opt.Id, (bool)e.Value!)" />
+
                                 <label class="form-check-label">@opt.Text</label>
                             </div>
                         }
@@ -89,39 +90,146 @@ else
                         <textarea class="form-control"
                                   rows="6"
                                   value="@GetTextAnswer(CurrentQuestion.Id)"
-                                  @onchange="(ChangeEventArgs e) => SetTextAnswer(CurrentQuestion.Id, e.Value?.ToString())"></textarea>
+                                  @onchange="(ChangeEventArgs e) => SetTextAnswer(CurrentQuestion.Id, e.Value?.ToString())">
+                                    </textarea>
                     </div>
                     break;
 
                 case QT.Coding:
                     <div class="mt-3">
-                        <textarea class="form-control"
-                                  rows="14"
-                                  spellcheck="false"
-                                  style="font-family: Consolas, 'Courier New', monospace;"
-                                  value="@GetTextAnswer(CurrentQuestion.Id)"
-                                  @onchange="(ChangeEventArgs e) => SetTextAnswer(CurrentQuestion.Id, e.Value?.ToString())"></textarea>
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <label class="form-label mb-0">
+                                C# Kod Editörü
+                            </label>
 
-                        <div class="mt-2 d-flex gap-2">
+                            <span class="badge bg-dark">
+                                Monaco Editor
+                            </span>
+                        </div>
+
+                        <div id="@EditorElementId"
+                             style="height:420px;border:1px solid #ddd;border-radius:8px;overflow:hidden;">
+                        </div>
+
+                        @if (!string.IsNullOrWhiteSpace(_editorError))
+                        {
+                            <div class="alert alert-danger mt-2">
+                                @_editorError
+                            </div>
+                        }
+
+                        <div class="mt-3 d-flex gap-2 align-items-center">
                             <button class="btn btn-outline-secondary btn-sm"
                                     disabled="@_runningCode"
                                     @onclick="RunCurrentCode">
-                                @(_runningCode ? "Çalıştırılıyor..." : "Kodu Çalıştır")
+                                @if (_runningCode)
+                                {
+                                    <span class="spinner-border spinner-border-sm me-1"></span>
+                                    <span>Kod çalıştırılıyor, lütfen bekle...</span>
+                                }
+                                else
+                                {
+                                    <span>Kodu Çalıştır</span>
+                                }
                             </button>
+
+                            @if (_lastRunSuccess == true)
+                            {
+                                <span class="badge bg-success">Kod doğru</span>
+                            }
+                            else if (_lastRunSuccess == false)
+                            {
+                                <span class="badge bg-danger">Kod hatalı</span>
+                            }
                         </div>
 
                         @if (!string.IsNullOrWhiteSpace(_runOutput))
                         {
-                            <div class="mt-2">
-                                <label class="form-label mb-1">Çıktı</label>
-                                <pre class="bg-light p-2 rounded small">@_runOutput</pre>
+                            <div class="mt-3">
+                                <label class="form-label mb-1">Test Sonucu</label>
+                                <pre class="bg-light p-3 rounded small border">@_runOutput</pre>
                             </div>
                         }
+
                         @if (!string.IsNullOrWhiteSpace(_runError))
                         {
-                            <div class="mt-2">
+                            <div class="mt-3">
                                 <label class="form-label mb-1 text-danger">Hata</label>
-                                <pre class="bg-light p-2 rounded small text-danger">@_runError</pre>
+                                <pre class="bg-light p-3 rounded small text-danger border border-danger">@_runError</pre>
+                            </div>
+                        }
+
+                        @if (_runResult?.TestCases != null && _runResult.TestCases.Any())
+                        {
+                            <div class="mt-3">
+                                <label class="form-label">Test Case Detayları</label>
+
+                                <div class="row g-2">
+                                    @{
+                                        var testIndex = 0;
+                                    }
+
+                                    @foreach (var tc in _runResult.TestCases)
+                                    {
+                                        testIndex++;
+
+                                        <div class="col-md-6">
+                                            <div class="card h-100 @(tc.IsSuccess ? "border-success" : "border-danger")">
+                                                <div class="card-body">
+                                                    <h6 class="card-title">
+                                                        Test @testIndex
+
+                                                        @if (tc.IsSuccess)
+                                                        {
+                                                            <span class="badge bg-success ms-2">Geçti</span>
+                                                        }
+                                                        else
+                                                        {
+                                                            <span class="badge bg-danger ms-2">Kaldı</span>
+                                                        }
+                                                    </h6>
+
+                                                    @if (!string.IsNullOrWhiteSpace(tc.Input))
+                                                    {
+                                                        <div class="small mb-2">
+                                                            <b>Input:</b>
+                                                            <pre class="bg-light p-2 rounded mt-1 mb-0">@tc.Input</pre>
+                                                        </div>
+                                                    }
+
+                                                    @if (tc.IsSuccess)
+                                                    {
+                                                        <div class="alert alert-success small mb-0">
+                                                            Bu test başarıyla geçti.
+                                                        </div>
+                                                    }
+                                                    else
+                                                    {
+                                                        <div class="alert alert-danger small mb-2">
+                                                            Bu test başarısız oldu. Beklenen çıktı adaydan gizlenmiştir.
+                                                        </div>
+
+                                                        @if (!string.IsNullOrWhiteSpace(tc.ActualOutput))
+                                                        {
+                                                            <div class="small mb-2">
+                                                                <b>Kodunun ürettiği çıktı:</b>
+                                                                <pre class="bg-light p-2 rounded mt-1 mb-0">@tc.ActualOutput</pre>
+                                                            </div>
+                                                        }
+                                                    }
+
+                                                    @if (!string.IsNullOrWhiteSpace(tc.Error))
+                                                    {
+                                                        <div class="small text-danger">
+                                                            <b>Hata:</b>
+                                                            <pre class="bg-light p-2 rounded mt-1 mb-0 text-danger">@tc.Error</pre>
+                                                        </div>
+                                                    }
+                                                </div>
+                                            </div>
+                                        </div>
+                                    }
+                                </div>
                             </div>
                         }
                     </div>
@@ -171,10 +279,12 @@ else
 
     private TestRunDto? _test;
     private int _currentIndex;
+
     private bool _saving;
     private bool _finished;
     private bool _finishedByTimeout;
     private bool _autoCancelled;
+
     private int _finalScore;
     private string? _error;
 
@@ -184,11 +294,17 @@ else
     private bool _runningCode;
     private string? _runOutput;
     private string? _runError;
+    private string? _editorError;
+    private bool? _lastRunSuccess;
+    private RunCodeResultDto? _runResult;
 
     private DotNetObjectReference<object>? _dotNetRef;
 
     private int _remainingSeconds = 0;
     private System.Timers.Timer? _timer;
+
+    private bool _editorNeedsInit;
+    private Guid? _lastInitializedEditorQuestionId;
 
     private int _remainingMinutesDisplay => _remainingSeconds / 60;
     private int _remainingSecondsDisplay => _remainingSeconds % 60;
@@ -197,6 +313,11 @@ else
         _test?.Questions != null && _currentIndex >= 0 && _currentIndex < _test.Questions.Count
             ? _test.Questions[_currentIndex]
             : null;
+
+    private string EditorElementId =>
+        CurrentQuestion == null
+            ? "candidateCodeEditor"
+            : $"candidateCodeEditor_{CurrentQuestion.Id:N}";
 
     protected override async Task OnInitializedAsync()
     {
@@ -207,10 +328,16 @@ else
             if (_test?.Questions != null && _test.Questions.Count > 0)
             {
                 _currentIndex = 0;
+
                 foreach (var q in _test.Questions)
                 {
                     _selected[q.Id] = new HashSet<Guid>();
                     _texts[q.Id] = q.Type == QT.Coding ? GetDefaultCodeTemplate() : null;
+                }
+
+                if (CurrentQuestion?.Type == QT.Coding)
+                {
+                    _editorNeedsInit = true;
                 }
             }
 
@@ -220,17 +347,122 @@ else
                 StartTimer();
             }
         }
-        catch (Exception ex) { _error = ex.Message; }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (!firstRender || _test == null) return;
+        if (firstRender && _test != null)
+        {
+            _dotNetRef ??= DotNetObjectReference.Create<object>(this);
 
-        _dotNetRef ??= DotNetObjectReference.Create<object>(this);
+            await JS.InvokeVoidAsync("examProctor.init", _dotNetRef, SessionId.ToString());
+            await JS.InvokeVoidAsync("examRecorder.start", SessionId.ToString());
+        }
 
-        await JS.InvokeVoidAsync("examProctor.init", _dotNetRef, SessionId.ToString());
-        await JS.InvokeVoidAsync("examRecorder.start", SessionId.ToString());
+        if (!_finished && !_autoCancelled && CurrentQuestion?.Type == QT.Coding)
+        {
+            if (_editorNeedsInit || _lastInitializedEditorQuestionId != CurrentQuestion.Id)
+            {
+                await InitCodeEditorAsync();
+            }
+        }
+    }
+
+    private async Task InitCodeEditorAsync()
+    {
+        if (CurrentQuestion == null || CurrentQuestion.Type != QT.Coding)
+        {
+            return;
+        }
+
+        try
+        {
+            _editorError = null;
+
+            var code = GetTextAnswer(CurrentQuestion.Id);
+
+            var ok = await JS.InvokeAsync<bool>(
+                "codeEditor.init",
+                EditorElementId,
+                code
+            );
+
+            if (!ok)
+            {
+                _editorError = "Kod editörü başlatılamadı.";
+                return;
+            }
+
+            _lastInitializedEditorQuestionId = CurrentQuestion.Id;
+            _editorNeedsInit = false;
+
+            await JS.InvokeVoidAsync("codeEditor.setDiagnostics", EditorElementId, null);
+        }
+        catch (Exception ex)
+        {
+            _editorError = "Kod editörü yüklenemedi: " + ex.Message;
+            _editorNeedsInit = false;
+        }
+
+        StateHasChanged();
+    }
+
+    private async Task SyncEditorCodeToMemoryAsync()
+    {
+        if (CurrentQuestion == null || CurrentQuestion.Type != QT.Coding)
+        {
+            return;
+        }
+
+        try
+        {
+            var code = await JS.InvokeAsync<string>(
+                "codeEditor.getValue",
+                EditorElementId
+            );
+
+            _texts[CurrentQuestion.Id] = code;
+        }
+        catch
+        {
+            // Editör henüz hazır değilse eldeki dictionary değeri korunur.
+        }
+    }
+
+    private async Task ClearEditorDiagnosticsAsync()
+    {
+        if (CurrentQuestion == null || CurrentQuestion.Type != QT.Coding)
+        {
+            return;
+        }
+
+        try
+        {
+            await JS.InvokeVoidAsync("codeEditor.setDiagnostics", EditorElementId, null);
+        }
+        catch
+        {
+        }
+    }
+
+    private async Task SetEditorDiagnosticsAsync(string? message)
+    {
+        if (CurrentQuestion == null || CurrentQuestion.Type != QT.Coding)
+        {
+            return;
+        }
+
+        try
+        {
+            await JS.InvokeVoidAsync("codeEditor.setDiagnostics", EditorElementId, message);
+        }
+        catch
+        {
+        }
     }
 
     private bool IsOptionSelected(Guid questionId, Guid optionId)
@@ -243,13 +475,24 @@ else
             set = new HashSet<Guid>();
             _selected[questionId] = set;
         }
-        if (selected) set.Add(optionId); else set.Remove(optionId);
+
+        if (selected)
+        {
+            set.Add(optionId);
+        }
+        else
+        {
+            set.Remove(optionId);
+        }
     }
 
     private string GetTextAnswer(Guid questionId)
-        => _texts.TryGetValue(questionId, out var t) ? t ?? string.Empty : string.Empty;
+        => _texts.TryGetValue(questionId, out var text) ? text ?? string.Empty : string.Empty;
 
-    private void SetTextAnswer(Guid questionId, string? text) => _texts[questionId] = text;
+    private void SetTextAnswer(Guid questionId, string? text)
+    {
+        _texts[questionId] = text;
+    }
 
     private string GetDefaultCodeTemplate() =>
 @"using System;
@@ -265,24 +508,88 @@ public class Program
     private async Task PrevQuestion()
     {
         await SaveCurrentAsync();
-        if (_currentIndex > 0) { _currentIndex--; ResetRunState(); }
+
+        if (_currentIndex > 0)
+        {
+            await DisposeCurrentEditorAsync();
+
+            _currentIndex--;
+            ResetRunState();
+
+            if (CurrentQuestion?.Type == QT.Coding)
+            {
+                _editorNeedsInit = true;
+            }
+        }
     }
 
     private async Task NextQuestion()
     {
         await SaveCurrentAsync();
-        if (_test != null && _currentIndex < _test.Questions.Count - 1) { _currentIndex++; ResetRunState(); }
+
+        if (_test != null && _currentIndex < _test.Questions.Count - 1)
+        {
+            await DisposeCurrentEditorAsync();
+
+            _currentIndex++;
+            ResetRunState();
+
+            if (CurrentQuestion?.Type == QT.Coding)
+            {
+                _editorNeedsInit = true;
+            }
+        }
     }
 
-    private void ResetRunState() { _runOutput = null; _runError = null; }
+    private async Task DisposeCurrentEditorAsync()
+    {
+        if (CurrentQuestion?.Type != QT.Coding)
+        {
+            return;
+        }
+
+        try
+        {
+            await SyncEditorCodeToMemoryAsync();
+            await JS.InvokeVoidAsync("codeEditor.dispose", EditorElementId);
+        }
+        catch
+        {
+        }
+
+        _lastInitializedEditorQuestionId = null;
+    }
+
+    private void ResetRunState()
+    {
+        _runOutput = null;
+        _runError = null;
+        _runResult = null;
+        _lastRunSuccess = null;
+        _editorError = null;
+    }
 
     private async Task RunCurrentCode()
     {
-        if (_test == null || CurrentQuestion == null || CurrentQuestion.Type != QT.Coding) return;
+        if (_test == null || CurrentQuestion == null || CurrentQuestion.Type != QT.Coding)
+        {
+            return;
+        }
 
-        _runningCode = true; _runOutput = null; _runError = null; StateHasChanged();
+        _runningCode = true;
+        _runOutput = null;
+        _runError = null;
+        _runResult = null;
+        _lastRunSuccess = null;
+
+        await ClearEditorDiagnosticsAsync();
+
+        StateHasChanged();
+
         try
         {
+            await SyncEditorCodeToMemoryAsync();
+
             var req = new RunCodeRequestDto
             {
                 SessionId = SessionId,
@@ -290,43 +597,96 @@ public class Program
                 Code = GetTextAnswer(CurrentQuestion.Id),
                 Language = "csharp"
             };
+
             var res = await CodeExecApp.RunAsync(req);
-            _runOutput = res.Output; _runError = res.Error;
+
+            _runResult = res;
+            _runOutput = res.Output;
+            _runError = res.Error;
+            _lastRunSuccess = res.Success;
+
+            if (!res.Success)
+            {
+                await SetEditorDiagnosticsAsync(res.Error);
+            }
+            else
+            {
+                await ClearEditorDiagnosticsAsync();
+            }
         }
-        catch (Exception ex) { _runError = ex.Message; }
-        finally { _runningCode = false; StateHasChanged(); }
+        catch (Exception ex)
+        {
+            _runError = ex.Message;
+            _lastRunSuccess = false;
+            await SetEditorDiagnosticsAsync(ex.Message);
+        }
+        finally
+        {
+            _runningCode = false;
+            StateHasChanged();
+        }
     }
 
     private async Task SaveCurrentAsync()
     {
-        if (_test == null || CurrentQuestion == null) return;
+        if (_test == null || CurrentQuestion == null)
+        {
+            return;
+        }
 
-        _saving = true; StateHasChanged();
+        _saving = true;
+        StateHasChanged();
+
         try
         {
-            var q = CurrentQuestion;
-            Guid[]? selectedIds = null; string? textAnswer = null;
+            var question = CurrentQuestion;
 
-            if (q.Type == QT.MultipleChoice) selectedIds = _selected[q.Id].ToArray();
-            else if (q.Type is QT.Classic or QT.Coding) textAnswer = GetTextAnswer(q.Id);
+            Guid[]? selectedIds = null;
+            string? textAnswer = null;
+
+            if (question.Type == QT.MultipleChoice)
+            {
+                selectedIds = _selected.TryGetValue(question.Id, out var set)
+                    ? set.ToArray()
+                    : Array.Empty<Guid>();
+            }
+            else if (question.Type == QT.Classic)
+            {
+                textAnswer = GetTextAnswer(question.Id);
+            }
+            else if (question.Type == QT.Coding)
+            {
+                await SyncEditorCodeToMemoryAsync();
+                textAnswer = GetTextAnswer(question.Id);
+            }
 
             await RunApp.SubmitAnswerAsync(new SubmitAnswerDto
             {
                 SessionId = SessionId,
-                QuestionId = q.Id,
+                QuestionId = question.Id,
                 SelectedOptionIds = selectedIds,
                 TextAnswer = textAnswer
             });
         }
-        catch (Exception ex) { _error = ex.Message; }
-        finally { _saving = false; StateHasChanged(); }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+            StateHasChanged();
+        }
     }
 
     private Task FinishExam() => FinishExamInternal(false);
 
     private async Task FinishExamInternal(bool auto)
     {
-        if (_finished || _test == null || _autoCancelled) return;
+        if (_finished || _test == null || _autoCancelled)
+        {
+            return;
+        }
 
         try
         {
@@ -339,15 +699,22 @@ public class Program
             _finalScore = score;
 
             _finishedByTimeout = auto;
-            var note = auto ? "Süre dolduğu için otomatik tamamlandı." : "Runner'dan kullanıcı tarafından tamamlandı.";
+
+            var note = auto
+                ? "Süre dolduğu için otomatik tamamlandı."
+                : "Runner'dan kullanıcı tarafından tamamlandı.";
 
             await SessionApp.FinishAsync(SessionId, score, note);
+
             _finished = true;
 
             await JS.InvokeVoidAsync("examRecorder.stop", SessionId.ToString());
             await JS.InvokeVoidAsync("examRunner.closeWindow");
         }
-        catch (Exception ex) { _error = ex.Message; }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
     }
 
     private Task CancelExam() => CancelInternal("Kullanıcı iptal etti.");
@@ -357,6 +724,7 @@ public class Program
         try
         {
             _autoCancelled = true;
+
             _timer?.Stop();
             _remainingSeconds = 0;
 
@@ -364,38 +732,59 @@ public class Program
             await SessionApp.CancelAsync(SessionId, reason);
             await JS.InvokeVoidAsync("examRunner.closeWindow");
         }
-        catch (Exception ex) { _error = ex.Message; }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
     }
 
     public async ValueTask DisposeAsync()
     {
         try
         {
+            if (CurrentQuestion?.Type == QT.Coding)
+            {
+                await JS.InvokeVoidAsync("codeEditor.dispose", EditorElementId);
+            }
+
             await JS.InvokeVoidAsync("examRecorder.stop", SessionId.ToString());
             await JS.InvokeVoidAsync("examProctor.dispose");
         }
-        catch { }
+        catch
+        {
+        }
 
         _timer?.Dispose();
         _dotNetRef?.Dispose();
     }
 
-    // JS -> .NET: Politika ihlali olduğunda direkt iptal
     [JSInvokable]
     public async Task CancelByPolicy(string? reason)
     {
-        if (_finished || _autoCancelled) return;
+        if (_finished || _autoCancelled)
+        {
+            return;
+        }
+
         await InvokeAsync(() => CancelInternal("Politika ihlali: " + (reason ?? "-")));
     }
 
     private void StartTimer()
     {
-        if (_remainingSeconds <= 0) return;
+        if (_remainingSeconds <= 0)
+        {
+            return;
+        }
 
         _timer = new System.Timers.Timer(1000);
+
         _timer.Elapsed += (_, __) =>
         {
-            if (_finished || _autoCancelled) { _timer?.Stop(); return; }
+            if (_finished || _autoCancelled)
+            {
+                _timer?.Stop();
+                return;
+            }
 
             if (_remainingSeconds <= 0)
             {
@@ -408,6 +797,7 @@ public class Program
                 _ = InvokeAsync(StateHasChanged);
             }
         };
+
         _timer.AutoReset = true;
         _timer.Start();
     }
