@@ -134,6 +134,123 @@ else
         </div>
     </div>
 
+    <h5>LLM Kod Analizi</h5>
+
+    @if (_detail.CodeReviews == null || !_detail.CodeReviews.Any())
+    {
+        <div class="alert alert-secondary">
+            Bu oturuma ait LLM kod analizi bulunamadı.
+        </div>
+    }
+    else
+    {
+        @foreach (var review in _detail.CodeReviews)
+        {
+            var reviewCardCss = review.IsSuspicious
+                ? "card mb-3 border-danger"
+                : "card mb-3 border-success";
+
+            var suspiciousBadgeCss = review.IsSuspicious
+                ? "badge bg-danger"
+                : "badge bg-success";
+
+            var suspiciousText = review.IsSuspicious
+                ? "Şüpheli"
+                : "Normal";
+
+            var testBadgeCss = review.TestsPassed
+                ? "badge bg-success"
+                : "badge bg-danger";
+
+            var testText = review.TestsPassed
+                ? "Testlerden geçti"
+                : "Testlerden geçemedi";
+
+            <div class="@reviewCardCss">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <strong>LLM Kod Analizi</strong>
+
+                    <div class="d-flex gap-2">
+                        <span class="@testBadgeCss">@testText</span>
+                        <span class="@suspiciousBadgeCss">@suspiciousText</span>
+                    </div>
+                </div>
+
+                <div class="card-body">
+                    @if (!string.IsNullOrWhiteSpace(review.QuestionText))
+                    {
+                        <div class="mb-3">
+                            <b>Soru:</b>
+                            <div class="mt-1">@review.QuestionText</div>
+                        </div>
+                    }
+
+                    <div class="row mb-3">
+                        <div class="col-md-3">
+                            <b>Test sonucu:</b>
+                            <div>@review.PassedCount / @review.TotalCount geçti</div>
+                        </div>
+
+                        <div class="col-md-3">
+                            <b>Şüpheli mi?</b>
+                            <div>
+                                <span class="@suspiciousBadgeCss">@suspiciousText</span>
+                            </div>
+                        </div>
+
+                        <div class="col-md-3">
+                            <b>Kalite puanı:</b>
+                            <div>@(review.QualityScore.HasValue ? $"{review.QualityScore}/100" : "-")</div>
+                        </div>
+
+                        <div class="col-md-3">
+                            <b>Provider:</b>
+                            <div>@(string.IsNullOrWhiteSpace(review.Provider) ? "-" : review.Provider)</div>
+                        </div>
+                    </div>
+
+                    @if (review.IsSuspicious)
+                    {
+                        <div class="alert alert-danger">
+                            Bu çözüm LLM tarafından şüpheli işaretlendi. Aday doğru test sonucuna ulaşmış olsa bile çözüm manuel incelenmeli.
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="alert alert-success">
+                            Bu çözüm LLM tarafından normal görünüyor.
+                        </div>
+                    }
+
+                    <div class="mb-3">
+                        <b>Özet:</b>
+                        <div class="alert alert-light border mt-2 mb-0">
+                            @review.Summary
+                        </div>
+                    </div>
+
+                    @if (!string.IsNullOrWhiteSpace(review.Flags))
+                    {
+                        <div class="mb-3">
+                            <b>Etiketler:</b>
+
+                            <div class="mt-2">
+                                @foreach (var flag in SplitFlags(review.Flags))
+                                {
+                                    <span class="badge bg-secondary me-1 mb-1">@flag</span>
+                                }
+                            </div>
+                        </div>
+                    }
+
+                    <p class="text-muted small mb-0">
+                        Analiz zamanı: @review.CreationTime.ToString("yyyy-MM-dd HH:mm")
+                    </p>
+                </div>
+            </div>
+        }
+    }
+
     <h5>Cevaplar</h5>
 
     @if (_detail.Answers == null || !_detail.Answers.Any())
@@ -159,7 +276,17 @@ else
 
                     @if (!string.IsNullOrWhiteSpace(ans.TextAnswer))
                     {
-                        <p><b>Cevap:</b> @ans.TextAnswer</p>
+                        if (ans.QuestionType.Equals("Coding", StringComparison.OrdinalIgnoreCase))
+                        {
+                            <div class="mb-2">
+                                <b>Aday kodu:</b>
+                                <pre class="bg-light p-2 rounded mt-2">@ans.TextAnswer</pre>
+                            </div>
+                        }
+                        else
+                        {
+                            <p><b>Cevap:</b> @ans.TextAnswer</p>
+                        }
                     }
 
                     @if (!string.IsNullOrWhiteSpace(ans.CodeOutput))
@@ -196,5 +323,18 @@ else
     private void GoBack()
     {
         Nav.NavigateTo("/admin/reports");
+    }
+
+    private static List<string> SplitFlags(string? flags)
+    {
+        if (string.IsNullOrWhiteSpace(flags))
+        {
+            return new List<string>();
+        }
+
+        return flags
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .ToList();
     }
 }

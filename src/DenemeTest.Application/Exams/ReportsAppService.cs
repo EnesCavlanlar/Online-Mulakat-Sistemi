@@ -32,6 +32,7 @@ namespace DenemeTest.Application.Exams
         private readonly IRepository<Question, Guid> _questionRepo;
         private readonly IRepository<QuestionOption, Guid> _optionRepo;
         private readonly IRepository<ProctoringEvent, Guid> _proctoringEventRepo;
+        private readonly IRepository<CodeReview, Guid> _codeReviewRepo;
 
         public ReportsAppService(
             IRepository<Score, Guid> scoreRepo,
@@ -40,7 +41,8 @@ namespace DenemeTest.Application.Exams
             IRepository<Answer, Guid> answerRepo,
             IRepository<Question, Guid> questionRepo,
             IRepository<QuestionOption, Guid> optionRepo,
-            IRepository<ProctoringEvent, Guid> proctoringEventRepo)
+            IRepository<ProctoringEvent, Guid> proctoringEventRepo,
+            IRepository<CodeReview, Guid> codeReviewRepo)
         {
             _scoreRepo = scoreRepo;
             _sessionRepo = sessionRepo;
@@ -49,6 +51,7 @@ namespace DenemeTest.Application.Exams
             _questionRepo = questionRepo;
             _optionRepo = optionRepo;
             _proctoringEventRepo = proctoringEventRepo;
+            _codeReviewRepo = codeReviewRepo;
         }
 
         // -------------------- LEADERBOARD --------------------
@@ -140,12 +143,20 @@ namespace DenemeTest.Application.Exams
                 CancelReason = session.CancelReason
             };
 
+            await FillAnswersAsync(dto, sessionId);
+            await FillCodeReviewsAsync(dto, sessionId);
+
+            return dto;
+        }
+
+        private async Task FillAnswersAsync(SessionDetailDto dto, Guid sessionId)
+        {
             var answers = await _answerRepo.GetListAsync(answer =>
                 answer.ExamSessionId == sessionId);
 
             if (!answers.Any())
             {
-                return dto;
+                return;
             }
 
             var questionIds = answers
@@ -195,8 +206,50 @@ namespace DenemeTest.Application.Exams
                     CodeOutput = null
                 });
             }
+        }
 
-            return dto;
+        private async Task FillCodeReviewsAsync(SessionDetailDto dto, Guid sessionId)
+        {
+            var codeReviews = await _codeReviewRepo.GetListAsync(review =>
+                review.ExamSessionId == sessionId);
+
+            if (!codeReviews.Any())
+            {
+                return;
+            }
+
+            var questionIds = codeReviews
+                .Select(review => review.QuestionId)
+                .Distinct()
+                .ToList();
+
+            var questions = await _questionRepo.GetListAsync(question =>
+                questionIds.Contains(question.Id));
+
+            foreach (var review in codeReviews.OrderBy(review => review.CreationTime))
+            {
+                var question = questions.FirstOrDefault(questionItem =>
+                    questionItem.Id == review.QuestionId);
+
+                dto.CodeReviews.Add(new CodeReviewDetailDto
+                {
+                    QuestionId = review.QuestionId,
+                    QuestionText = question?.Text ?? string.Empty,
+
+                    TestsPassed = review.TestsPassed,
+                    PassedCount = review.PassedCount,
+                    TotalCount = review.TotalCount,
+
+                    IsSuspicious = review.IsSuspicious,
+                    QualityScore = review.QualityScore,
+
+                    Summary = review.Summary,
+                    Flags = review.Flags,
+                    Provider = review.Provider,
+
+                    CreationTime = review.CreationTime
+                });
+            }
         }
 
         // -------------------- SESSION SİL --------------------
@@ -235,6 +288,14 @@ namespace DenemeTest.Application.Exams
                 await _scoreRepo.DeleteAsync(score, autoSave: false);
             }
 
+            var codeReviews = await _codeReviewRepo.GetListAsync(review =>
+                review.ExamSessionId == sessionId);
+
+            foreach (var codeReview in codeReviews)
+            {
+                await _codeReviewRepo.DeleteAsync(codeReview, autoSave: false);
+            }
+
             await _sessionRepo.DeleteAsync(session, autoSave: true);
         }
     }
@@ -264,6 +325,8 @@ namespace DenemeTest.Application.Exams
         public string? CancelReason { get; set; }
 
         public List<QuestionAnswerDetailDto> Answers { get; set; } = new();
+
+        public List<CodeReviewDetailDto> CodeReviews { get; set; } = new();
     }
 
     public class QuestionAnswerDetailDto
@@ -279,5 +342,30 @@ namespace DenemeTest.Application.Exams
         public string? TextAnswer { get; set; }
 
         public string? CodeOutput { get; set; }
+    }
+
+    public class CodeReviewDetailDto
+    {
+        public Guid QuestionId { get; set; }
+
+        public string QuestionText { get; set; } = string.Empty;
+
+        public bool TestsPassed { get; set; }
+
+        public int PassedCount { get; set; }
+
+        public int TotalCount { get; set; }
+
+        public bool IsSuspicious { get; set; }
+
+        public int? QualityScore { get; set; }
+
+        public string Summary { get; set; } = string.Empty;
+
+        public string Flags { get; set; } = string.Empty;
+
+        public string Provider { get; set; } = string.Empty;
+
+        public DateTime CreationTime { get; set; }
     }
 }

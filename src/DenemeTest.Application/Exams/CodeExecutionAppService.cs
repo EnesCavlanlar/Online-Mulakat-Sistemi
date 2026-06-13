@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using DenemeTest.Exams;
 using DenemeTest.Exams.Dtos;
@@ -87,15 +88,15 @@ namespace DenemeTest.Application.Exams
 
                 var isSuccess =
                     execResult.ExitCode == 0 &&
-                    string.Equals(actualOutput, expectedOutput, StringComparison.Ordinal);
+                    IsOutputAccepted(expectedOutput, actualOutput);
 
                 results.Add(new TestCaseResultDto
                 {
                     TestCaseId = testCase.Id,
 
-                    // Adaya beklenen cevabı göstermiyoruz.
+                    // Adaya gerçek input / expected output göstermiyoruz.
                     Input = string.IsNullOrWhiteSpace(testCase.Input) ? null : "Gizli input kullanıldı.",
-                    ExpectedOutput = null,
+                    ExpectedOutput = string.Empty,
 
                     ActualOutput = execResult.Output,
                     Error = execResult.Error,
@@ -113,6 +114,8 @@ namespace DenemeTest.Application.Exams
             var total = testCases.Count;
             var allPassed = passed == total;
 
+            var output = BuildCandidateFriendlyOutput(results, total);
+
             return new RunCodeResultDto
             {
                 Success = allPassed,
@@ -120,7 +123,7 @@ namespace DenemeTest.Application.Exams
                 TestCases = results,
                 PassedCount = passed,
                 TotalCount = total,
-                Output = BuildCandidateFriendlyOutput(results, total),
+                Output = output,
                 Error = allPassed ? null : BuildCandidateFriendlyError(results, total)
             };
         }
@@ -166,17 +169,17 @@ namespace DenemeTest.Application.Exams
         }
 
         private static string BuildCandidateFriendlyOutput(
-     List<TestCaseResultDto> results,
-     int totalTestCount)
+            List<TestCaseResultDto> results,
+            int totalTestCount)
         {
             var passed = results.Count(x => x.IsSuccess);
 
             var lines = new List<string>
-    {
-        passed == totalTestCount
-            ? $"✅ Başarılı: {passed}/{totalTestCount} test geçti."
-            : $"❌ Başarısız: {passed}/{totalTestCount} test geçti."
-    };
+            {
+                passed == totalTestCount
+                    ? $"✅ Başarılı: {passed}/{totalTestCount} test geçti."
+                    : $"❌ Başarısız: {passed}/{totalTestCount} test geçti."
+            };
 
             for (var i = 0; i < results.Count; i++)
             {
@@ -192,7 +195,7 @@ namespace DenemeTest.Application.Exams
 
                 if (!string.IsNullOrWhiteSpace(result.Input))
                 {
-                    lines.Add("Bu testte verilen input kullanıldı fakat beklenen çıktı adaydan gizlenmiştir.");
+                    lines.Add("Bu testte gizli input kullanıldı.");
                 }
 
                 if (!string.IsNullOrWhiteSpace(result.ActualOutput))
@@ -209,6 +212,7 @@ namespace DenemeTest.Application.Exams
                 else
                 {
                     lines.Add("Kodun çıktısı beklenen sonuçla eşleşmedi.");
+                    lines.Add("İpucu: Sonucu ekrana yazdırdığından emin ol.");
                 }
             }
 
@@ -219,6 +223,7 @@ namespace DenemeTest.Application.Exams
 
             return string.Join(Environment.NewLine, lines);
         }
+
         private static string? BuildCandidateFriendlyError(
             List<TestCaseResultDto> results,
             int totalTestCount)
@@ -236,6 +241,66 @@ namespace DenemeTest.Application.Exams
             }
 
             return "Kodun çıktısı beklenen sonuçla eşleşmedi.";
+        }
+
+        private static bool IsOutputAccepted(string expectedOutput, string actualOutput)
+        {
+            var expected = NormalizeOutput(expectedOutput);
+            var actual = NormalizeOutput(actualOutput);
+
+            if (string.Equals(expected, actual, StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            if (string.Equals(expected, actual, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            if (IsSingleNumber(expected))
+            {
+                var expectedNumber = ExtractNumbers(expected).LastOrDefault();
+                var actualNumbers = ExtractNumbers(actual);
+
+                if (!string.IsNullOrWhiteSpace(expectedNumber) &&
+                    actualNumbers.Count > 0 &&
+                    string.Equals(actualNumbers.Last(), expectedNumber, StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool IsSingleNumber(string value)
+        {
+            var normalized = NormalizeNumber(value);
+            var numbers = ExtractNumbers(normalized);
+
+            return numbers.Count == 1 &&
+                   string.Equals(numbers[0], normalized.Trim(), StringComparison.Ordinal);
+        }
+
+        private static List<string> ExtractNumbers(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return new List<string>();
+            }
+
+            return Regex.Matches(value, @"-?\d+([.,]\d+)?")
+                .Select(x => NormalizeNumber(x.Value))
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .ToList();
+        }
+
+        private static string NormalizeNumber(string value)
+        {
+            return value
+                .Trim()
+                .Replace(",", ".");
         }
 
         private static string NormalizeLanguage(string? language)

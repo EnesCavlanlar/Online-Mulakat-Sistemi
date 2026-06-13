@@ -38,6 +38,8 @@ public class DenemeTestDbContext :
     public DbSet<Answer> Answers { get; set; }
     public DbSet<ProctoringEvent> ProctoringEvents { get; set; }
     public DbSet<Score> Scores { get; set; }
+    //
+    public DbSet<CodeReview> CodeReviews { get; set; }
 
     #region Entities from the modules
 
@@ -101,6 +103,32 @@ public class DenemeTestDbContext :
              .WithOne()
              .HasForeignKey(q => q.TestId)
              .OnDelete(DeleteBehavior.Cascade);
+        });
+        //
+        builder.Entity<CodeReview>(b =>
+        {
+            b.ToTable("AppCodeReviews");
+
+            b.ConfigureByConvention();
+
+            b.Property(x => x.Summary)
+                .HasMaxLength(2000);
+
+            b.Property(x => x.Flags)
+                .HasMaxLength(1000);
+
+            b.Property(x => x.Provider)
+                .HasMaxLength(128);
+
+            b.HasIndex(x => x.ExamSessionId);
+
+            b.HasIndex(x => x.QuestionId);
+
+            b.HasIndex(x => new
+            {
+                x.ExamSessionId,
+                x.QuestionId
+            });
         });
 
         builder.Entity<Question>(b =>
