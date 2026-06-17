@@ -28,6 +28,13 @@
     Sekme değiştirir, odak kaybedersen, ekran paylaşımını kapatırsan veya Alt+Tab yaparsan sınavın iptal edilir. Lütfen bu pencereden ayrılma.
 </div>
 
+@if (!_finished && !_autoCancelled && _test != null && string.IsNullOrWhiteSpace(_error))
+{
+    <div class="@GetSecurityAlertCssClass()">
+        @GetSecurityStatusText()
+    </div>
+}
+
 @if (!string.IsNullOrWhiteSpace(_error))
 {
     <div class="alert alert-danger">
@@ -64,16 +71,6 @@ else if (_finished)
 else if (_test == null)
 {
     <p>Yükleniyor...</p>
-}
-else if (!_mediaReady)
-{
-    <div class="alert alert-info">
-        Sınav güvenlik modülleri başlatılıyor. Kamera ve ekran kaydı hazırlanıyor, lütfen bekle...
-    </div>
-
-    <div class="spinner-border" role="status">
-        <span class="visually-hidden">Yükleniyor...</span>
-    </div>
 }
 else if (_test.Questions == null || !_test.Questions.Any())
 {
@@ -347,11 +344,14 @@ else
     private bool _recorderStarted;
     private bool _mediaReady;
     private bool _securityInitStarted;
+    private bool _securityCheckCompleted;
+    private bool _proctorReady;
     private bool _finalizingExam;
     private bool _reloadingTest;
 
     private int _finalScore;
     private string? _error;
+    private string? _securityWarning;
 
     private readonly Dictionary<Guid, HashSet<Guid>> _selected = new();
     private readonly Dictionary<Guid, string?> _texts = new();
@@ -409,12 +409,15 @@ else
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (firstRender && _test != null && string.IsNullOrWhiteSpace(_error))
+        if (!_finished && !_autoCancelled && _test != null && string.IsNullOrWhiteSpace(_error))
         {
-            await EnsureExamSecurityReadyAsync();
+            if (!_securityInitStarted)
+            {
+                await EnsureExamSecurityReadyAsync();
+            }
         }
 
-        if (_mediaReady && !_finished && !_autoCancelled && CurrentQuestion?.Type == QT.Coding)
+        if (!_finished && !_autoCancelled && CurrentQuestion?.Type == QT.Coding)
         {
             if (_editorNeedsInit || _lastInitializedEditorQuestionId != CurrentQuestion.Id)
             {
@@ -445,6 +448,8 @@ else
             {
                 _editorNeedsInit = true;
             }
+
+            StartTimerIfQuestionsReady();
 
             await InvokeAsync(StateHasChanged);
         }
@@ -537,70 +542,189 @@ else
 
     private async Task EnsureExamSecurityReadyAsync()
     {
-        if (_securityInitStarted || _mediaReady)
+        if (_securityInitStarted)
         {
             return;
         }
 
         _securityInitStarted = true;
+        _securityCheckCompleted = false;
+        _securityWarning = null;
 
         try
         {
-            RecorderStatusDto? recorderStatus = null;
+            var recorderStatus = await GetRecorderStatusSafelyAsync();
 
-            try
+            if (IsRecorderStatusForThisSession(recorderStatus))
             {
-                recorderStatus = await InvokeWithTimeoutAsync(
-                    () => JS.InvokeAsync<RecorderStatusDto>("examRecorder.getStatus").AsTask(),
-                    TimeSpan.FromSeconds(2)
+                _recorderStarted = true;
+            }
+            else
+            {
+                _recorderStarted = false;
+                AppendSecurityWarning(
+                    "Kamera/ekran kaydı Start ekranında başlamış görünmüyor veya bu oturuma ait doğrulanamadı. Sorular kilitlenmedi; ancak canlı kullanımda bu oturumun kaydı eksik olabilir."
                 );
             }
-            catch
-            {
-                recorderStatus = null;
-            }
-
-            if (recorderStatus == null ||
-                !recorderStatus.Started ||
-                !string.Equals(recorderStatus.SessionId, SessionId.ToString(), StringComparison.OrdinalIgnoreCase))
-            {
-                _error = "Kamera/ekran kaydı Start ekranında başlatılamamış görünüyor. Lütfen bu sınav penceresini kapatıp yeni davet linkiyle tekrar giriş yapın. Runner ekranında kayıt tekrar başlatılmaz.";
-                StateHasChanged();
-                return;
-            }
-
-            _recorderStarted = true;
 
             _dotNetRef ??= DotNetObjectReference.Create<object>(this);
 
-            await JS.InvokeVoidAsync(
-                "examProctor.init",
-                _dotNetRef,
-                SessionId.ToString()
-            );
-
-            _mediaReady = true;
-
-            if (_test?.Questions == null || !_test.Questions.Any())
+            try
             {
-                await LoadTestAsync();
+                await InvokeWithTimeoutAsync(
+                    async () =>
+                    {
+                        await JS.InvokeVoidAsync(
+                            "examProctor.init",
+                            _dotNetRef,
+                            SessionId.ToString()
+                        ).AsTask();
+                    },
+                    TimeSpan.FromSeconds(2)
+                );
+
+                _proctorReady = true;
             }
+            catch (Exception ex)
+            {
+                _proctorReady = false;
+                AppendSecurityWarning("Proctoring modülü başlatılamadı veya zaman aşımına uğradı. Sorular kilitlenmedi. Detay: " + ex.Message);
+            }
+
+            _mediaReady = _recorderStarted && _proctorReady;
+            _securityCheckCompleted = true;
 
             NormalizeCurrentIndex();
             EnsureAnswerContainers();
-
-            if (_remainingSeconds > 0)
-            {
-                StartTimer();
-            }
+            StartTimerIfQuestionsReady();
 
             await InvokeAsync(StateHasChanged);
         }
         catch (Exception ex)
         {
-            _error = "Sınav güvenlik modülleri başlatılamadı: " + ex.Message;
-            StateHasChanged();
+            _mediaReady = false;
+            _securityCheckCompleted = true;
+            AppendSecurityWarning("Güvenlik modülleri kontrol edilirken hata oluştu. Sorular kilitlenmedi. Detay: " + ex.Message);
+            await InvokeAsync(StateHasChanged);
         }
+    }
+
+    private async Task<RecorderStatusDto?> GetRecorderStatusSafelyAsync()
+    {
+        try
+        {
+            var loaded = await InvokeWithTimeoutAsync(
+                () => JS.InvokeAsync<bool>(
+                    "eval",
+                    "typeof window.examRecorder !== 'undefined' && typeof window.examRecorder.getStatus === 'function'"
+                ).AsTask(),
+                TimeSpan.FromSeconds(2)
+            );
+
+            if (!loaded)
+            {
+                return null;
+            }
+
+            return await InvokeWithTimeoutAsync(
+                () => JS.InvokeAsync<RecorderStatusDto>("examRecorder.getStatus").AsTask(),
+                TimeSpan.FromSeconds(2)
+            );
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private bool IsRecorderStatusForThisSession(RecorderStatusDto? status)
+    {
+        return status != null &&
+               status.Started &&
+               string.Equals(status.SessionId, SessionId.ToString(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void AppendSecurityWarning(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_securityWarning))
+        {
+            _securityWarning = message;
+        }
+        else if (!_securityWarning.Contains(message, StringComparison.OrdinalIgnoreCase))
+        {
+            _securityWarning += " " + message;
+        }
+    }
+
+    private void StartTimerIfQuestionsReady()
+    {
+        if (_test?.Questions != null && _test.Questions.Any() && _remainingSeconds > 0)
+        {
+            StartTimer();
+        }
+    }
+
+    private string GetSecurityAlertCssClass()
+    {
+        if (!string.IsNullOrWhiteSpace(_securityWarning))
+        {
+            return "alert alert-warning py-2";
+        }
+
+        if (!_securityCheckCompleted)
+        {
+            return "alert alert-info py-2";
+        }
+
+        return _mediaReady
+            ? "alert alert-success py-2"
+            : "alert alert-warning py-2";
+    }
+
+    private string GetSecurityStatusText()
+    {
+        if (!string.IsNullOrWhiteSpace(_securityWarning))
+        {
+            return "Güvenlik uyarısı: " + _securityWarning;
+        }
+
+        if (!_securityCheckCompleted)
+        {
+            return "Güvenlik modülleri arka planda kontrol ediliyor. Sorular bu kontrol beklenmeden gösterilir.";
+        }
+
+        if (_mediaReady)
+        {
+            return "Kamera/ekran kaydı ve proctoring aktif.";
+        }
+
+        return "Güvenlik modülleri tam doğrulanamadı. Sorular kilitlenmedi.";
+    }
+
+    private static async Task InvokeWithTimeoutAsync(
+        Func<Task> action,
+        TimeSpan timeout)
+    {
+        using var cts = new CancellationTokenSource();
+
+        var task = action();
+        var delayTask = Task.Delay(timeout, cts.Token);
+
+        var completedTask = await Task.WhenAny(task, delayTask);
+
+        if (completedTask == delayTask)
+        {
+            throw new TimeoutException("İşlem zaman aşımına uğradı.");
+        }
+
+        cts.Cancel();
+
+        await task;
     }
 
     private static async Task<T> InvokeWithTimeoutAsync<T>(
@@ -1058,7 +1182,17 @@ public class Program
 
         if (!_recorderStarted)
         {
-            return false;
+            var status = await GetRecorderStatusSafelyAsync();
+
+            if (IsRecorderStatusForThisSession(status))
+            {
+                _recorderStarted = true;
+            }
+            else
+            {
+                AppendSecurityWarning("Recorder durumu doğrulanamadığı için kayıt durdurma/yükleme yapılamadı.");
+                return false;
+            }
         }
 
         try
