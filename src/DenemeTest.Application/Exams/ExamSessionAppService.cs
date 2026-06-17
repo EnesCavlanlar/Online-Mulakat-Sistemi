@@ -18,6 +18,7 @@ namespace DenemeTest.Application.Exams;
 public class ExamSessionAppService : ApplicationService, IExamSessionAppService
 {
     private readonly IRepository<ExamInvitation, Guid> _invRepo;
+    private readonly IRepository<Test, Guid> _testRepo;
     private readonly IRepository<ExamSession, Guid> _sessionRepo;
     private readonly IRepository<ProctoringEvent, Guid> _eventRepo;
     private readonly IRepository<Score, Guid> _scoreRepo;
@@ -31,6 +32,7 @@ public class ExamSessionAppService : ApplicationService, IExamSessionAppService
 
     public ExamSessionAppService(
         IRepository<ExamInvitation, Guid> invRepo,
+        IRepository<Test, Guid> testRepo,
         IRepository<ExamSession, Guid> sessionRepo,
         IRepository<ProctoringEvent, Guid> eventRepo,
         IRepository<Score, Guid> scoreRepo,
@@ -43,6 +45,7 @@ public class ExamSessionAppService : ApplicationService, IExamSessionAppService
         IConfiguration config)
     {
         _invRepo = invRepo;
+        _testRepo = testRepo;
         _sessionRepo = sessionRepo;
         _eventRepo = eventRepo;
         _scoreRepo = scoreRepo;
@@ -55,8 +58,6 @@ public class ExamSessionAppService : ApplicationService, IExamSessionAppService
         _config = config;
     }
 
-    // -------------------- TOKEN İLE OTURUM BAŞLAT --------------------
-
     [UnitOfWork]
     public async Task<StartByTokenResultDto> StartByTokenAsync(string token)
     {
@@ -65,7 +66,8 @@ public class ExamSessionAppService : ApplicationService, IExamSessionAppService
             throw new UserFriendlyException("Davet tokenı boş olamaz.");
         }
 
-        var tokenHash = HashToken(token);
+        var normalizedToken = token.Trim();
+        var tokenHash = HashToken(normalizedToken);
 
         var invitation = await _invRepo.FirstOrDefaultAsync(x => x.TokenHash == tokenHash);
         if (invitation == null)
@@ -78,9 +80,23 @@ public class ExamSessionAppService : ApplicationService, IExamSessionAppService
             throw new UserFriendlyException("Bu davet zaten kullanılmış. Aynı link ile tekrar sınava girilemez.");
         }
 
-        if (invitation.ExpireAt <= DateTime.UtcNow)
+        var now = Clock.Now;
+
+        if (invitation.ExpireAt <= now)
         {
             throw new UserFriendlyException("Davetin süresi geçmiş.");
+        }
+
+        var test = await _testRepo.GetAsync(invitation.TestId);
+
+        if (test.StartAt.HasValue && now < test.StartAt.Value)
+        {
+            throw new UserFriendlyException("Sınav henüz başlamadı.");
+        }
+
+        if (test.EndAt.HasValue && now > test.EndAt.Value)
+        {
+            throw new UserFriendlyException("Sınavın bitiş zamanı geçmiş.");
         }
 
         var alreadyActiveSession = await _sessionRepo.FirstOrDefaultAsync(session =>
@@ -105,7 +121,7 @@ public class ExamSessionAppService : ApplicationService, IExamSessionAppService
             GuidGenerator.Create(),
             invitation.TestId,
             invitation.CandidateId,
-            Clock.Now
+            now
         );
 
         await _sessionRepo.InsertAsync(examSession, autoSave: true);
@@ -119,10 +135,8 @@ public class ExamSessionAppService : ApplicationService, IExamSessionAppService
         };
     }
 
-    // -------------------- PROCTORING EVENT / İHLAL KAYDI --------------------
-
     [UnitOfWork]
-    public async Task RecordEventAsync(Guid sessionId, ProctoringEventType type, string? detail)
+    public async Task RecordEventAsync(Guid sessionId, ProctoringEventTypeDto type, string? detail)
     {
         var session = await _sessionRepo.GetAsync(sessionId);
 
@@ -131,47 +145,68 @@ public class ExamSessionAppService : ApplicationService, IExamSessionAppService
             return;
         }
 
-        var proctoringEvent = new ProctoringEvent(
-            GuidGenerator.Create(),
-            sessionId,
-            type,
-            detail
-        );
-
-        await _eventRepo.InsertAsync(proctoringEvent, autoSave: true);
-
         session.RegisterViolation();
 
         var maxViolationCount = GetMaxViolations();
 
-        if (!session.IsCancelled && session.ViolationCount >= maxViolationCount)
+        var normalizedDetail = string.IsNullOrWhiteSpace(detail)
+            ? "-"
+            : detail.Trim();
+
+        normalizedDetail =
+            $"{normalizedDetail} | İhlal sayısı: {session.ViolationCount}/{maxViolationCount}";
+
+        if (session.ViolationCount >= maxViolationCount)
         {
-            session.Cancel($"Proctoring limiti aşıldı ({session.ViolationCount}/{maxViolationCount}).");
+            normalizedDetail =
+                $"{normalizedDetail} | Proctoring limiti aşıldı.";
         }
 
+        var proctoringEvent = new ProctoringEvent(
+            GuidGenerator.Create(),
+            sessionId,
+            MapToDomainProctoringEventType(type),
+            normalizedDetail
+        );
+
+        await _eventRepo.InsertAsync(proctoringEvent, autoSave: true);
+
+        /*
+         * Burada session.Cancel(...) çağırmıyoruz.
+         *
+         * Politika ihlali geldiğinde Runner.razor tarafı önce mevcut cevabı kaydediyor,
+         * sonra puanı hesaplıyor, sonra CancelAsync çağırıyor.
+         *
+         * Burada direkt iptal edersek puan hesaplama akışı bozulabilir.
+         */
         await _sessionRepo.UpdateAsync(session, autoSave: true);
     }
-
-    // -------------------- OTURUM İPTAL --------------------
 
     [UnitOfWork]
     public async Task CancelAsync(Guid sessionId, string reason)
     {
         var session = await _sessionRepo.GetAsync(sessionId);
 
-        if (session.IsCancelled || session.FinishedAt != null)
+        if (session.FinishedAt != null)
         {
             return;
         }
 
-        session.Cancel(string.IsNullOrWhiteSpace(reason)
+        if (session.IsCancelled)
+        {
+            return;
+        }
+
+        var normalizedReason = string.IsNullOrWhiteSpace(reason)
             ? "Sınav iptal edildi."
-            : reason);
+            : reason.Trim();
+
+        session.Cancel(normalizedReason);
 
         await _sessionRepo.UpdateAsync(session, autoSave: true);
-    }
 
-    // -------------------- OTURUM BİTİR --------------------
+        await GenerateCodeReviewsSafelyAsync(sessionId);
+    }
 
     [UnitOfWork]
     public async Task FinishAsync(Guid sessionId, int? scoreValue = null, string? scoreNote = null)
@@ -211,8 +246,6 @@ public class ExamSessionAppService : ApplicationService, IExamSessionAppService
 
         await GenerateCodeReviewsSafelyAsync(sessionId);
     }
-
-    // -------------------- LLM CODE REVIEW --------------------
 
     private async Task GenerateCodeReviewsSafelyAsync(Guid sessionId)
     {
@@ -265,8 +298,7 @@ public class ExamSessionAppService : ApplicationService, IExamSessionAppService
         }
         catch
         {
-            // LLM analizi sınav bitirme akışını bozmasın.
-            // Hata olursa sınav yine başarıyla tamamlanmış kalır.
+            // LLM analizi sınav bitirme/iptal akışını bozmasın.
         }
     }
 
@@ -405,8 +437,6 @@ public class ExamSessionAppService : ApplicationService, IExamSessionAppService
         }
     }
 
-    // -------------------- OUTPUT CHECK HELPERS --------------------
-
     private static bool IsOutputAccepted(string expectedOutput, string actualOutput)
     {
         var expected = NormalizeOutput(expectedOutput);
@@ -485,8 +515,6 @@ public class ExamSessionAppService : ApplicationService, IExamSessionAppService
         return string.Join(Environment.NewLine, lines).Trim();
     }
 
-    // -------------------- HELPERS --------------------
-
     private int GetMaxViolations()
     {
         var valueFromConfig = _config["Exam:MaxViolations"];
@@ -519,15 +547,9 @@ public class ExamSessionAppService : ApplicationService, IExamSessionAppService
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(rawToken));
         return Convert.ToHexString(bytes).ToLowerInvariant();
     }
-}
 
-public interface IExamSessionAppService
-{
-    Task<StartByTokenResultDto> StartByTokenAsync(string token);
-
-    Task RecordEventAsync(Guid sessionId, ProctoringEventType type, string? detail);
-
-    Task CancelAsync(Guid sessionId, string reason);
-
-    Task FinishAsync(Guid sessionId, int? scoreValue = null, string? scoreNote = null);
+    private static ProctoringEventType MapToDomainProctoringEventType(ProctoringEventTypeDto type)
+    {
+        return (ProctoringEventType)(int)type;
+    }
 }

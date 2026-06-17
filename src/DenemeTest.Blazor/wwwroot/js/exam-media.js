@@ -1,63 +1,294 @@
 ﻿// window.mediaGate: Kamera/Mikrofon + Ekran paylaşımı izin/önizleme yöneticisi
 window.mediaGate = (function () {
     const previews = new Map(); // elementId -> MediaStream
+    const previewInfos = new Map(); // elementId -> info object
+
+    function ensureMediaDevices() {
+        if (!navigator.mediaDevices) {
+            throw new Error("Tarayıcı medya cihazlarını desteklemiyor.");
+        }
+
+        if (typeof navigator.mediaDevices.getUserMedia !== "function") {
+            throw new Error("Tarayıcı kamera/mikrofon erişimini desteklemiyor.");
+        }
+
+        if (typeof navigator.mediaDevices.getDisplayMedia !== "function") {
+            throw new Error("Tarayıcı ekran paylaşımını desteklemiyor.");
+        }
+    }
 
     async function requestCam(videoId) {
+        ensureMediaDevices();
+
+        if (!videoId) {
+            throw new Error("Kamera önizleme elementi bulunamadı.");
+        }
+
+        stopPreview(videoId);
+
         const stream = await navigator.mediaDevices.getUserMedia({
             video: true,
-            audio: { echoCancellation: true, noiseSuppression: true }
+            audio: {
+                echoCancellation: true,
+                noiseSuppression: true
+            }
         });
-        attach(videoId, stream);
+
+        validateLiveStream(stream, "Kamera/mikrofon akışı başlatılamadı.");
+
+        attach(videoId, stream, {
+            kind: "cam",
+            isFullScreen: true,
+            displaySurface: "camera"
+        });
+
         return true;
     }
 
     async function requestScreen(videoId) {
-        // Kullanıcıya her zaman seçim penceresi gelecek; kullanıcı "Tüm ekran"ı seçmeli.
-        const stream = await navigator.mediaDevices.getDisplayMedia({
-            video: { frameRate: 25 },
-            audio: false
-        });
+        ensureMediaDevices();
 
-        // "Tüm ekran" seçilmedi ise uyarı ver (bunu garantilemek tarayıcı politikası gereği %100 mümkün değil)
+        if (!videoId) {
+            throw new Error("Ekran önizleme elementi bulunamadı.");
+        }
+
+        stopPreview(videoId);
+
+        let stream = null;
+
         try {
-            const vt = stream.getVideoTracks()[0];
-            const settings = vt.getSettings && vt.getSettings();
-            const surf = settings && (settings.displaySurface || settings.displaySurfaceType);
-            if (surf && String(surf).toLowerCase() !== "monitor") {
-                // kullanıcı pencere/sekme seçmiş olabilir; yine de önizleme başlatılıyor
-                console.warn("[mediaGate] Fullscreen dışında seçim yapıldı:", surf);
+            stream = await navigator.mediaDevices.getDisplayMedia({
+                video: {
+                    frameRate: 25,
+                    displaySurface: "monitor"
+                },
+                audio: false,
+
+                // Chrome destekliyorsa adayın tüm ekran seçmesini kolaylaştırır.
+                monitorTypeSurfaces: "include",
+                selfBrowserSurface: "exclude",
+                surfaceSwitching: "exclude"
+            });
+
+            validateLiveStream(stream, "Ekran paylaşımı başlatılamadı.");
+
+            const info = getScreenInfo(stream);
+
+            if (!info.canVerifySurface) {
+                stopStream(stream);
+                throw new Error("Tarayıcı ekran paylaşımı türünü doğrulayamıyor. Güvenlik nedeniyle sınava giriş engellendi. Lütfen güncel Chrome kullanıp 'Tüm ekran' seçin.");
             }
-        } catch { }
 
-        attach(videoId, stream);
-        return true;
+            if (!info.isFullScreen) {
+                stopStream(stream);
+                throw new Error("Sınava başlamak için pencere veya sekme değil, 'Tüm ekran' paylaşımı seçmelisin.");
+            }
+
+            attach(videoId, stream, {
+                kind: "screen",
+                isFullScreen: true,
+                displaySurface: info.displaySurface
+            });
+
+            return true;
+        } catch (e) {
+            if (stream) {
+                stopStream(stream);
+            }
+
+            throw e;
+        }
     }
 
-    function attach(videoId, stream) {
-        const el = document.getElementById(videoId);
-        if (!el) return;
+    function getScreenInfo(stream) {
+        const videoTrack = stream && stream.getVideoTracks
+            ? stream.getVideoTracks()[0]
+            : null;
+
+        const settings = videoTrack && videoTrack.getSettings
+            ? videoTrack.getSettings()
+            : null;
+
+        const rawDisplaySurface = settings &&
+            (settings.displaySurface || settings.displaySurfaceType);
+
+        const displaySurface = rawDisplaySurface
+            ? String(rawDisplaySurface).toLowerCase()
+            : "";
+
+        return {
+            canVerifySurface: !!displaySurface,
+            displaySurface: displaySurface || "unknown",
+            isFullScreen: displaySurface === "monitor"
+        };
+    }
+
+    function validateLiveStream(stream, message) {
+        if (!stream || !stream.getTracks) {
+            throw new Error(message);
+        }
+
+        const hasLiveTrack = stream
+            .getTracks()
+            .some(function (track) {
+                return track.readyState === "live";
+            });
+
+        if (!hasLiveTrack) {
+            throw new Error(message);
+        }
+    }
+
+    function attach(videoId, stream, info) {
+        const element = document.getElementById(videoId);
+
+        if (!element) {
+            stopStream(stream);
+            throw new Error("Önizleme video elementi bulunamadı: " + videoId);
+        }
+
         previews.set(videoId, stream);
-        el.srcObject = stream;
-        el.muted = true;
-        el.play().catch(() => { });
+        previewInfos.set(videoId, info || {});
+
+        element.srcObject = stream;
+        element.muted = true;
+        element.playsInline = true;
+
+        try {
+            const playPromise = element.play();
+
+            if (playPromise && typeof playPromise.catch === "function") {
+                playPromise.catch(function (e) {
+                    console.warn("[mediaGate] video play engellendi:", e);
+                });
+            }
+        } catch (e) {
+            console.warn("[mediaGate] video play hata:", e);
+        }
     }
 
-    // runner/recorder tarafına önizleme stream'ini devretmek için
+    // recorder tarafına önizleme stream'ini devretmek için.
+    // Önemli: pop edilen stream durdurulmaz, sadece map'ten çıkarılır.
     function pop(videoId) {
-        const s = previews.get(videoId);
-        if (s) previews.delete(videoId);
-        return s || null;
+        const stream = previews.get(videoId);
+
+        if (stream) {
+            previews.delete(videoId);
+            previewInfos.delete(videoId);
+
+            const element = document.getElementById(videoId);
+            if (element) {
+                try {
+                    element.pause();
+                    element.srcObject = null;
+                } catch {
+                }
+            }
+        }
+
+        return stream || null;
     }
 
     function stopPreview(videoId) {
         try {
-            const s = previews.get(videoId);
-            if (s) {
-                s.getTracks().forEach(t => { try { t.stop(); } catch { } });
+            const stream = previews.get(videoId);
+
+            if (stream) {
+                stopStream(stream);
                 previews.delete(videoId);
+                previewInfos.delete(videoId);
             }
-        } catch { }
+
+            const element = document.getElementById(videoId);
+            if (element) {
+                try {
+                    element.pause();
+                    element.srcObject = null;
+                } catch {
+                }
+            }
+        } catch (e) {
+            console.warn("[mediaGate] stopPreview error:", e);
+        }
     }
 
-    return { requestCam, requestScreen, pop, stopPreview };
+    function stopAllPreviews() {
+        try {
+            Array.from(previews.keys()).forEach(function (videoId) {
+                stopPreview(videoId);
+            });
+        } catch (e) {
+            console.warn("[mediaGate] stopAllPreviews error:", e);
+        }
+    }
+
+    function hasPreview(videoId) {
+        const stream = previews.get(videoId);
+
+        if (!stream || !stream.getTracks) {
+            return false;
+        }
+
+        return stream.getTracks().some(function (track) {
+            return track.readyState === "live";
+        });
+    }
+
+    function isFullScreenShare(videoId) {
+        const info = previewInfos.get(videoId);
+
+        if (!info) {
+            return false;
+        }
+
+        return info.kind === "screen" && info.isFullScreen === true;
+    }
+
+    function getPreviewInfo(videoId) {
+        const info = previewInfos.get(videoId);
+
+        if (!info) {
+            return {
+                exists: false,
+                kind: null,
+                isFullScreen: false,
+                displaySurface: null
+            };
+        }
+
+        return {
+            exists: true,
+            kind: info.kind || null,
+            isFullScreen: info.isFullScreen === true,
+            displaySurface: info.displaySurface || null
+        };
+    }
+
+    function stopStream(stream) {
+        try {
+            if (!stream) {
+                return;
+            }
+
+            stream.getTracks().forEach(function (track) {
+                try {
+                    track.stop();
+                } catch {
+                }
+            });
+        } catch (e) {
+            console.warn("[mediaGate] stopStream error:", e);
+        }
+    }
+
+    return {
+        requestCam,
+        requestScreen,
+        pop,
+        stopPreview,
+        stopAllPreviews,
+        hasPreview,
+        isFullScreenShare,
+        getPreviewInfo
+    };
 })();

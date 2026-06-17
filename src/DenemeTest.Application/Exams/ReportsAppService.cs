@@ -13,15 +13,6 @@ using Volo.Abp.Uow;
 
 namespace DenemeTest.Application.Exams
 {
-    public interface IReportsAppService
-    {
-        Task<LeaderboardItemDto[]> GetLeaderboardAsync(int take);
-
-        Task<SessionDetailDto> GetSessionDetailAsync(Guid sessionId);
-
-        Task DeleteSessionAsync(Guid sessionId);
-    }
-
     [Authorize(DenemeTestPermissions.Exams.Reports)]
     public class ReportsAppService : ApplicationService, IReportsAppService
     {
@@ -54,35 +45,33 @@ namespace DenemeTest.Application.Exams
             _codeReviewRepo = codeReviewRepo;
         }
 
-        // -------------------- LEADERBOARD --------------------
-
         public async Task<LeaderboardItemDto[]> GetLeaderboardAsync(int take)
         {
-            var safeTake = Math.Max(1, take);
+            var safeTake = Math.Clamp(take, 1, 500);
 
-            var scores = (await _scoreRepo.GetListAsync())
-                .OrderByDescending(score => score.Value)
-                .ThenBy(score => score.CreationTime)
-                .Take(safeTake)
-                .ToList();
-
-            if (!scores.Any())
-            {
-                return Array.Empty<LeaderboardItemDto>();
-            }
-
-            var sessionIds = scores
-                .Select(score => score.ExamSessionId)
-                .Distinct()
-                .ToList();
-
-            var sessions = await _sessionRepo.GetListAsync(session =>
-                sessionIds.Contains(session.Id));
+            var sessions = await _sessionRepo.GetListAsync();
 
             if (!sessions.Any())
             {
                 return Array.Empty<LeaderboardItemDto>();
             }
+
+            var sessionIds = sessions
+                .Select(session => session.Id)
+                .Distinct()
+                .ToList();
+
+            var scores = await _scoreRepo.GetListAsync(score =>
+                sessionIds.Contains(score.ExamSessionId));
+
+            var latestScoreBySession = scores
+                .GroupBy(score => score.ExamSessionId)
+                .ToDictionary(
+                    group => group.Key,
+                    group => group
+                        .OrderByDescending(score => score.CreationTime)
+                        .First()
+                );
 
             var candidateIds = sessions
                 .Select(session => session.CandidateId)
@@ -92,29 +81,39 @@ namespace DenemeTest.Application.Exams
             var candidates = await _candidateRepo.GetListAsync(candidate =>
                 candidateIds.Contains(candidate.Id));
 
-            var result =
-                from score in scores
-                join session in sessions on score.ExamSessionId equals session.Id
-                join candidate in candidates on session.CandidateId equals candidate.Id
-                select new LeaderboardItemDto
+            var candidateById = candidates.ToDictionary(candidate => candidate.Id);
+
+            var result = sessions
+                .Where(session => candidateById.ContainsKey(session.CandidateId))
+                .Select(session =>
                 {
-                    CandidateId = candidate.Id,
-                    FirstName = candidate.FirstName,
-                    LastName = candidate.LastName,
-                    Email = candidate.Email,
+                    var candidate = candidateById[session.CandidateId];
 
-                    Score = score.Value,
-                    ExamSessionId = session.Id,
+                    latestScoreBySession.TryGetValue(session.Id, out var score);
 
-                    IsCancelled = session.IsCancelled,
-                    FinishedAt = session.FinishedAt,
-                    ViolationCount = session.ViolationCount
-                };
+                    return new LeaderboardItemDto
+                    {
+                        CandidateId = candidate.Id,
+                        FirstName = candidate.FirstName,
+                        LastName = candidate.LastName,
+                        Email = candidate.Email,
 
-            return result.ToArray();
+                        Score = score?.Value ?? 0,
+                        ExamSessionId = session.Id,
+
+                        IsCancelled = session.IsCancelled,
+                        FinishedAt = session.FinishedAt,
+                        ViolationCount = session.ViolationCount
+                    };
+                })
+                .OrderByDescending(item => item.Score)
+                .ThenByDescending(item => item.FinishedAt.HasValue)
+                .ThenByDescending(item => item.ViolationCount)
+                .Take(safeTake)
+                .ToArray();
+
+            return result;
         }
-
-        // -------------------- SESSION DETAY --------------------
 
         public async Task<SessionDetailDto> GetSessionDetailAsync(Guid sessionId)
         {
@@ -125,6 +124,8 @@ namespace DenemeTest.Application.Exams
 
             var session = await _sessionRepo.GetAsync(sessionId);
             var candidate = await _candidateRepo.GetAsync(session.CandidateId);
+
+            var score = await GetLatestScoreAsync(sessionId);
 
             var dto = new SessionDetailDto
             {
@@ -138,60 +139,105 @@ namespace DenemeTest.Application.Exams
                 StartTime = session.StartedAt,
                 EndTime = session.FinishedAt,
 
+                Score = score?.Value,
+                ScoreExplanation = score?.Explanation,
+
                 Violations = session.ViolationCount,
                 IsCancelled = session.IsCancelled,
-                CancelReason = session.CancelReason
+                CancelReason = session.CancelReason,
+
+                CandidateRecordingUrl = $"/api/recordings/download?sessionId={session.Id}&kind=cam",
+                ScreenRecordingUrl = $"/api/recordings/download?sessionId={session.Id}&kind=screen",
+                RecordingExistsUrl = $"/api/recordings/exists?sessionId={session.Id}"
             };
 
-            await FillAnswersAsync(dto, sessionId);
+            await FillAnswersAsync(dto, session);
             await FillCodeReviewsAsync(dto, sessionId);
+            await FillProctoringEventsAsync(dto, sessionId);
 
             return dto;
         }
 
-        private async Task FillAnswersAsync(SessionDetailDto dto, Guid sessionId)
+        private async Task<Score?> GetLatestScoreAsync(Guid sessionId)
         {
-            var answers = await _answerRepo.GetListAsync(answer =>
-                answer.ExamSessionId == sessionId);
+            var scores = await _scoreRepo.GetListAsync(score =>
+                score.ExamSessionId == sessionId);
 
-            if (!answers.Any())
+            return scores
+                .OrderByDescending(score => score.CreationTime)
+                .FirstOrDefault();
+        }
+
+        private async Task FillAnswersAsync(SessionDetailDto dto, ExamSession session)
+        {
+            var questions = await _questionRepo.GetListAsync(question =>
+                question.TestId == session.TestId);
+
+            questions = questions
+                .OrderBy(question => question.CreationTime)
+                .ThenBy(question => question.Id)
+                .ToList();
+
+            if (!questions.Any())
             {
                 return;
             }
 
-            var questionIds = answers
-                .Select(answer => answer.QuestionId)
+            var questionIds = questions
+                .Select(question => question.Id)
                 .Distinct()
                 .ToList();
 
-            var questions = await _questionRepo.GetListAsync(question =>
-                questionIds.Contains(question.Id));
+            var answers = await _answerRepo.GetListAsync(answer =>
+                answer.ExamSessionId == session.Id &&
+                questionIds.Contains(answer.QuestionId));
 
             var options = await _optionRepo.GetListAsync(option =>
                 questionIds.Contains(option.QuestionId));
 
-            foreach (var answer in answers)
+            foreach (var question in questions)
             {
-                var question = questions.FirstOrDefault(questionItem =>
-                    questionItem.Id == answer.QuestionId);
+                var answer = answers.FirstOrDefault(answerItem =>
+                    answerItem.QuestionId == question.Id);
 
-                if (question == null)
-                {
-                    continue;
-                }
+                var questionOptions = options
+                    .Where(option => option.QuestionId == question.Id)
+                    .OrderBy(option => option.CreationTime)
+                    .ThenBy(option => option.Id)
+                    .ToList();
 
                 List<string>? selectedOptionTexts = null;
+                List<string>? correctOptionTexts = null;
+                bool? isCorrect = null;
 
-                if (answer.SelectedOptionIds != null && answer.SelectedOptionIds.Any())
+                if (question.Type == QuestionType.MultipleChoice)
                 {
-                    var selectedOptionIdSet = answer.SelectedOptionIds.ToHashSet();
+                    var selectedOptionIds = answer?.SelectedOptionIds ?? Array.Empty<Guid>();
 
-                    selectedOptionTexts = options
-                        .Where(option =>
-                            option.QuestionId == question.Id &&
-                            selectedOptionIdSet.Contains(option.Id))
+                    var selectedOptionIdSet = selectedOptionIds.ToHashSet();
+
+                    selectedOptionTexts = questionOptions
+                        .Where(option => selectedOptionIdSet.Contains(option.Id))
                         .Select(option => option.Text)
                         .ToList();
+
+                    correctOptionTexts = questionOptions
+                        .Where(option => option.IsCorrect)
+                        .Select(option => option.Text)
+                        .ToList();
+
+                    var correctIds = questionOptions
+                        .Where(option => option.IsCorrect)
+                        .Select(option => option.Id)
+                        .OrderBy(id => id)
+                        .ToArray();
+
+                    var selectedIds = selectedOptionIds
+                        .Distinct()
+                        .OrderBy(id => id)
+                        .ToArray();
+
+                    isCorrect = correctIds.Length > 0 && correctIds.SequenceEqual(selectedIds);
                 }
 
                 dto.Answers.Add(new QuestionAnswerDetailDto
@@ -199,9 +245,13 @@ namespace DenemeTest.Application.Exams
                     QuestionId = question.Id,
                     QuestionText = question.Text,
                     QuestionType = question.Type.ToString(),
+                    QuestionPoints = question.Points,
 
                     SelectedOptions = selectedOptionTexts,
-                    TextAnswer = answer.TextAnswer,
+                    CorrectOptions = correctOptionTexts,
+                    IsCorrect = isCorrect,
+
+                    TextAnswer = answer?.TextAnswer,
 
                     CodeOutput = null
                 });
@@ -252,7 +302,24 @@ namespace DenemeTest.Application.Exams
             }
         }
 
-        // -------------------- SESSION SİL --------------------
+        private async Task FillProctoringEventsAsync(SessionDetailDto dto, Guid sessionId)
+        {
+            var events = await _proctoringEventRepo.GetListAsync(proctoringEvent =>
+                proctoringEvent.ExamSessionId == sessionId);
+
+            foreach (var proctoringEvent in events
+                         .OrderBy(proctoringEvent => proctoringEvent.CreationTime)
+                         .ThenBy(proctoringEvent => proctoringEvent.Id))
+            {
+                dto.ProctoringEvents.Add(new ProctoringEventDetailDto
+                {
+                    Id = proctoringEvent.Id,
+                    Type = proctoringEvent.Type.ToString(),
+                    Detail = proctoringEvent.Detail,
+                    CreationTime = proctoringEvent.CreationTime
+                });
+            }
+        }
 
         [UnitOfWork]
         public async Task DeleteSessionAsync(Guid sessionId)
@@ -298,74 +365,5 @@ namespace DenemeTest.Application.Exams
 
             await _sessionRepo.DeleteAsync(session, autoSave: true);
         }
-    }
-
-    // -------------------- DTO'LAR --------------------
-
-    public class SessionDetailDto
-    {
-        public Guid SessionId { get; set; }
-
-        public Guid CandidateId { get; set; }
-
-        public string CandidateFirstName { get; set; } = string.Empty;
-
-        public string CandidateLastName { get; set; } = string.Empty;
-
-        public string CandidateEmail { get; set; } = string.Empty;
-
-        public DateTime? StartTime { get; set; }
-
-        public DateTime? EndTime { get; set; }
-
-        public int Violations { get; set; }
-
-        public bool IsCancelled { get; set; }
-
-        public string? CancelReason { get; set; }
-
-        public List<QuestionAnswerDetailDto> Answers { get; set; } = new();
-
-        public List<CodeReviewDetailDto> CodeReviews { get; set; } = new();
-    }
-
-    public class QuestionAnswerDetailDto
-    {
-        public Guid QuestionId { get; set; }
-
-        public string QuestionText { get; set; } = string.Empty;
-
-        public string QuestionType { get; set; } = string.Empty;
-
-        public List<string>? SelectedOptions { get; set; }
-
-        public string? TextAnswer { get; set; }
-
-        public string? CodeOutput { get; set; }
-    }
-
-    public class CodeReviewDetailDto
-    {
-        public Guid QuestionId { get; set; }
-
-        public string QuestionText { get; set; } = string.Empty;
-
-        public bool TestsPassed { get; set; }
-
-        public int PassedCount { get; set; }
-
-        public int TotalCount { get; set; }
-
-        public bool IsSuspicious { get; set; }
-
-        public int? QualityScore { get; set; }
-
-        public string Summary { get; set; } = string.Empty;
-
-        public string Flags { get; set; } = string.Empty;
-
-        public string Provider { get; set; } = string.Empty;
-
-        public DateTime CreationTime { get; set; }
     }
 }

@@ -44,10 +44,10 @@
 
     <AbpScripts BundleName="@BlazorLeptonXLiteThemeBundles.Scripts.Global" />
 
-    <script src="/js/exam-media.js?v=12"></script>
-    <script src="/js/examProctor.js?v=12"></script>
-    <script src="/js/recorder.js?v=12"></script>
-    <script src="/js/codeEditor.js?v=1"></script>
+    <script src="/js/exam-media.js?v=16"></script>
+    <script src="/js/examProctor.js?v=13"></script>
+    <script src="/js/recorder.js?v=17"></script>
+    <script src="/js/codeEditor.js?v=2"></script>
 
     <script>
         window.examRunner = window.examRunner || {
@@ -74,30 +74,38 @@
                 stopPreviewLoaded: !!(window.mediaGate && typeof window.mediaGate.stopPreview === "function"),
 
                 examProctorLoaded: !!window.examProctor,
-                startProctorLoaded: !!(window.examProctor && typeof window.examProctor.start === "function"),
-                stopProctorLoaded: !!(window.examProctor && typeof window.examProctor.stop === "function"),
+                initProctorLoaded: !!(window.examProctor && typeof window.examProctor.init === "function"),
+                enforcePoliciesLoaded: !!(window.examProctor && typeof window.examProctor.enforcePolicies === "function"),
+                hardCancelLoaded: !!(window.examProctor && typeof window.examProctor.hardCancel === "function"),
+                disposeProctorLoaded: !!(window.examProctor && typeof window.examProctor.dispose === "function"),
 
                 examRecorderLoaded: !!window.examRecorder,
                 startRecorderLoaded: !!(window.examRecorder && typeof window.examRecorder.start === "function"),
-                stopRecorderLoaded: !!(window.examRecorder && typeof window.examRecorder.stop === "function")
+                stopRecorderLoaded: !!(window.examRecorder && typeof window.examRecorder.stop === "function"),
+                cancelRecorderLoaded: !!(window.examRecorder && typeof window.examRecorder.cancel === "function"),
+
+                codeEditorLoaded: !!window.codeEditor,
+                initCodeEditorLoaded: !!(window.codeEditor && typeof window.codeEditor.init === "function"),
+                getCodeEditorValueLoaded: !!(window.codeEditor && typeof window.codeEditor.getValue === "function"),
+                disposeCodeEditorLoaded: !!(window.codeEditor && typeof window.codeEditor.dispose === "function")
             };
         };
 
-        window.forceStopExamMedia = function () {
+        window.forceStopExamMedia = async function () {
             try {
                 if (window.examRecorder && typeof window.examRecorder.stop === "function") {
-                    window.examRecorder.stop();
+                    await window.examRecorder.stop();
                 }
             } catch (e) {
                 console.warn("examRecorder stop error", e);
             }
 
             try {
-                if (window.examProctor && typeof window.examProctor.stop === "function") {
-                    window.examProctor.stop();
+                if (window.examProctor && typeof window.examProctor.dispose === "function") {
+                    window.examProctor.dispose();
                 }
             } catch (e) {
-                console.warn("examProctor stop error", e);
+                console.warn("examProctor dispose error", e);
             }
 
             try {

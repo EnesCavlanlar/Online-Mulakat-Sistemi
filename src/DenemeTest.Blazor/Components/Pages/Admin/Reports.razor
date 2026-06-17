@@ -17,10 +17,51 @@
     <div class="alert alert-success">@_successMessage</div>
 }
 
-<div class="d-flex align-items-center gap-3 mb-3">
+@if (_items != null)
+{
+    <div class="row g-3 mb-3">
+        <div class="col-md-3">
+            <div class="card border-primary h-100">
+                <div class="card-body">
+                    <div class="text-muted small">Toplam Oturum</div>
+                    <h4 class="mb-0">@_items.Length</h4>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-3">
+            <div class="card border-success h-100">
+                <div class="card-body">
+                    <div class="text-muted small">Tamamlanan</div>
+                    <h4 class="mb-0">@_items.Count(x => !x.IsCancelled && x.FinishedAt.HasValue)</h4>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-3">
+            <div class="card border-danger h-100">
+                <div class="card-body">
+                    <div class="text-muted small">İptal Edilen</div>
+                    <h4 class="mb-0">@_items.Count(x => x.IsCancelled)</h4>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-3">
+            <div class="card border-secondary h-100">
+                <div class="card-body">
+                    <div class="text-muted small">Devam Eden</div>
+                    <h4 class="mb-0">@_items.Count(x => !x.IsCancelled && !x.FinishedAt.HasValue)</h4>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
     <label class="form-label mb-0">Gösterim:</label>
 
-    <select class="form-select w-auto" @bind="_take" @bind:event="onchange">
+    <select class="form-select w-auto" value="@_take" @onchange="OnTakeChanged">
         <option value="10">İlk 10</option>
         <option value="20">İlk 20</option>
         <option value="30">İlk 30</option>
@@ -39,85 +80,112 @@
 }
 else if (!_items.Any())
 {
-    <div class="alert alert-info">Henüz puanlanmış sınav bulunmuyor.</div>
+    <div class="alert alert-info">
+        Henüz sınav oturumu bulunmuyor.
+    </div>
 }
 else
 {
-    <table class="table table-striped align-middle">
-        <thead>
-            <tr>
-                <th style="width:60px">#</th>
-                <th>Ad Soyad</th>
-                <th>E-posta</th>
-                <th style="width:90px">Puan</th>
-                <th style="width:140px">Durum</th>
-                <th style="width:150px">Bitiş Zamanı</th>
-                <th style="width:90px">İhlal</th>
-                <th style="width:270px">İşlemler</th>
-            </tr>
-        </thead>
-
-        <tbody>
-            @{
-                var idx = 0;
-            }
-
-            @foreach (LeaderboardItemDto row in _items!)
-            {
-                var rowClass = GetRowCss(row);
-
-                <tr class="@rowClass">
-                    <td>@(++idx)</td>
-                    <td>@row.FirstName @row.LastName</td>
-                    <td>@row.Email</td>
-                    <td><strong>@row.Score</strong></td>
-
-                    <td>
-                        @RenderStatus(row)
-                    </td>
-
-                    <td>
-                        @if (row.FinishedAt.HasValue)
-                        {
-                            @row.FinishedAt.Value.ToLocalTime().ToString("g")
-                        }
-                        else
-                        {
-                            <span class="text-muted">–</span>
-                        }
-                    </td>
-
-                    <td>
-                        @if (row.ViolationCount > 0)
-                        {
-                            <span class="badge bg-warning text-dark">@row.ViolationCount</span>
-                        }
-                        else
-                        {
-                            <span class="text-muted">0</span>
-                        }
-                    </td>
-
-                    <td>
-                        <button class="btn btn-sm btn-primary me-1"
-                                @onclick="() => GoToDetail(row.ExamSessionId)">
-                            Detay
-                        </button>
-
-                        <button class="btn btn-sm btn-outline-secondary me-1"
-                                @onclick="() => DownloadRecording(row.ExamSessionId)">
-                            Kayıt
-                        </button>
-
-                        <button class="btn btn-sm btn-outline-danger"
-                                @onclick="() => DeleteSession(row)">
-                            Sil
-                        </button>
-                    </td>
+    <div class="table-responsive">
+        <table class="table table-striped align-middle">
+            <thead>
+                <tr>
+                    <th style="width:60px">#</th>
+                    <th>Ad Soyad</th>
+                    <th>E-posta</th>
+                    <th style="width:100px">Puan</th>
+                    <th style="width:140px">Durum</th>
+                    <th style="width:170px">Bitiş Zamanı</th>
+                    <th style="width:90px">İhlal</th>
+                    <th style="width:360px">İşlemler</th>
                 </tr>
-            }
-        </tbody>
-    </table>
+            </thead>
+
+            <tbody>
+                @{
+                    var idx = 0;
+                }
+
+                @foreach (LeaderboardItemDto row in _items)
+                {
+                    var rowClass = GetRowCss(row);
+                    var scoreCss = GetScoreBadgeCss(row.Score);
+                    var cacheKey = DateTimeOffset.Now.ToUnixTimeSeconds();
+
+                    var candidateVideoUrl = $"/api/recordings/download?sessionId={row.ExamSessionId}&kind=cam&v={cacheKey}";
+                    var screenVideoUrl = $"/api/recordings/download?sessionId={row.ExamSessionId}&kind=screen&v={cacheKey}";
+
+                    <tr class="@rowClass">
+                        <td>@(++idx)</td>
+
+                        <td>
+                            <strong>@row.FirstName @row.LastName</strong>
+                        </td>
+
+                        <td>@row.Email</td>
+
+                        <td>
+                            <span class="@scoreCss">@row.Score/100</span>
+                        </td>
+
+                        <td>
+                            <span class="@GetStatusBadgeCss(row)">
+                                @GetStatusText(row)
+                            </span>
+                        </td>
+
+                        <td>
+                            @if (row.FinishedAt.HasValue)
+                            {
+                                @row.FinishedAt.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm")
+                            }
+                            else
+                            {
+                                <span class="text-muted">-</span>
+                            }
+                        </td>
+
+                        <td>
+                            @if (row.ViolationCount > 0)
+                            {
+                                <span class="badge bg-warning text-dark">@row.ViolationCount</span>
+                            }
+                            else
+                            {
+                                <span class="badge bg-secondary">0</span>
+                            }
+                        </td>
+
+                        <td>
+                            <div class="d-flex gap-1 flex-wrap">
+                                <button class="btn btn-sm btn-primary"
+                                        @onclick="() => GoToDetail(row.ExamSessionId)">
+                                    Detay
+                                </button>
+
+                                <a class="btn btn-sm btn-outline-secondary"
+                                   href="@candidateVideoUrl"
+                                   target="_blank">
+                                    Kamera
+                                </a>
+
+                                <a class="btn btn-sm btn-outline-secondary"
+                                   href="@screenVideoUrl"
+                                   target="_blank">
+                                    Ekran
+                                </a>
+
+                                <button class="btn btn-sm btn-outline-danger"
+                                        @onclick="() => DeleteSession(row)">
+                                    Sil
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
 }
 
 @code {
@@ -129,6 +197,16 @@ else
 
     protected override async Task OnInitializedAsync()
     {
+        await Reload();
+    }
+
+    private async Task OnTakeChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var value))
+        {
+            _take = value;
+        }
+
         await Reload();
     }
 
@@ -156,12 +234,6 @@ else
         Nav.NavigateTo($"/admin/session/{id}");
     }
 
-    private void DownloadRecording(Guid sessionId)
-    {
-        var url = $"/api/recordings/download?sessionId={sessionId}";
-        Nav.NavigateTo(url, forceLoad: true);
-    }
-
     private async Task DeleteSession(LeaderboardItemDto row)
     {
         _errorMessage = null;
@@ -169,7 +241,7 @@ else
 
         var confirmed = await JS.InvokeAsync<bool>(
             "confirm",
-            $"{row.FirstName} {row.LastName} adlı adayın bu sınav kaydını silmek istediğine emin misin? Bu işlem cevapları, skoru ve proctoring kayıtlarını da siler."
+            $"{row.FirstName} {row.LastName} adlı adayın sınav kaydını silmek istediğine emin misin?\n\nBu işlem cevapları, skoru, LLM analizini ve proctoring event kayıtlarını siler.\n\nNot: Video dosyaları şu an diskten ayrıca silinmez."
         );
 
         if (!confirmed)
@@ -189,7 +261,7 @@ else
         }
     }
 
-    private string GetRowCss(LeaderboardItemDto row)
+    private static string GetRowCss(LeaderboardItemDto row)
     {
         if (row.IsCancelled)
         {
@@ -204,19 +276,48 @@ else
         return string.Empty;
     }
 
-    private RenderFragment RenderStatus(LeaderboardItemDto row) => builder =>
+    private static string GetStatusText(LeaderboardItemDto row)
     {
-        var status = row.IsCancelled
-            ? "İptal"
-            : row.FinishedAt.HasValue ? "Tamamlandı" : "Devam Ediyor";
+        if (row.IsCancelled)
+        {
+            return "İptal";
+        }
 
-        var css = row.IsCancelled
-            ? "badge bg-danger"
-            : row.FinishedAt.HasValue ? "badge bg-success" : "badge bg-secondary";
+        if (row.FinishedAt.HasValue)
+        {
+            return "Tamamlandı";
+        }
 
-        builder.OpenElement(0, "span");
-        builder.AddAttribute(1, "class", css);
-        builder.AddContent(2, status);
-        builder.CloseElement();
-    };
+        return "Devam Ediyor";
+    }
+
+    private static string GetStatusBadgeCss(LeaderboardItemDto row)
+    {
+        if (row.IsCancelled)
+        {
+            return "badge bg-danger";
+        }
+
+        if (row.FinishedAt.HasValue)
+        {
+            return "badge bg-success";
+        }
+
+        return "badge bg-secondary";
+    }
+
+    private static string GetScoreBadgeCss(int score)
+    {
+        if (score >= 70)
+        {
+            return "badge bg-success";
+        }
+
+        if (score >= 40)
+        {
+            return "badge bg-warning text-dark";
+        }
+
+        return "badge bg-danger";
+    }
 }

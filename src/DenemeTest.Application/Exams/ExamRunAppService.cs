@@ -58,7 +58,8 @@ namespace DenemeTest.Application.Exams
                 throw new BusinessException("Invitation:TokenEmpty");
             }
 
-            var tokenHash = HashToken(token);
+            var normalizedToken = token.Trim();
+            var tokenHash = HashToken(normalizedToken);
 
             var inv = await _invRepo.FirstOrDefaultAsync(x => x.TokenHash == tokenHash);
             if (inv == null)
@@ -71,24 +72,51 @@ namespace DenemeTest.Application.Exams
                 throw new BusinessException("Invitation:AlreadyUsed");
             }
 
-            if (inv.ExpireAt <= DateTime.UtcNow)
+            var now = Clock.Now;
+
+            if (inv.ExpireAt <= now)
             {
                 throw new BusinessException("Invitation:Expired");
+            }
+
+            var test = await _testRepo.GetAsync(inv.TestId);
+
+            if (test.StartAt.HasValue && now < test.StartAt.Value)
+            {
+                throw new UserFriendlyException("Sınav henüz başlamadı.");
+            }
+
+            if (test.EndAt.HasValue && now > test.EndAt.Value)
+            {
+                throw new UserFriendlyException("Sınavın bitiş zamanı geçmiş.");
+            }
+
+            var alreadyActiveSession = await _sessionRepo.FirstOrDefaultAsync(session =>
+                session.TestId == inv.TestId &&
+                session.CandidateId == inv.CandidateId &&
+                !session.IsCancelled &&
+                session.FinishedAt == null
+            );
+
+            if (alreadyActiveSession != null)
+            {
+                inv.MarkUsed();
+                await _invRepo.UpdateAsync(inv, autoSave: true);
+
+                throw new UserFriendlyException("Bu test için zaten aktif bir oturum var. Aynı davetle ikinci kez giriş yapılamaz.");
             }
 
             var session = new ExamSession(
                 id: GuidGenerator.Create(),
                 testId: inv.TestId,
                 candidateId: inv.CandidateId,
-                startedAt: DateTime.UtcNow
+                startedAt: now
             );
 
             await _sessionRepo.InsertAsync(session, autoSave: true);
 
             inv.MarkUsed();
             await _invRepo.UpdateAsync(inv, autoSave: true);
-
-            var test = await _testRepo.GetAsync(inv.TestId);
 
             return new StartWithTokenResultDto
             {
@@ -107,11 +135,36 @@ namespace DenemeTest.Application.Exams
                 throw new UserFriendlyException("Oturum geçersiz.");
             }
 
+            if (sess.FinishedAt != null)
+            {
+                throw new UserFriendlyException("Bu oturum daha önce tamamlanmış.");
+            }
+
             var test = await _testRepo.GetAsync(sess.TestId);
 
             var questions = await _questionRepo.GetListAsync(q => q.TestId == test.Id);
+
+            questions = questions
+                .OrderBy(q => q.CreationTime)
+                .ThenBy(q => q.Id)
+                .ToList();
+
+            if (test.ShuffleQuestions)
+            {
+                questions = StableShuffle(
+                    questions,
+                    $"{sessionId:N}:questions"
+                );
+            }
+
             var qIds = questions.Select(x => x.Id).ToList();
+
             var options = await _optionRepo.GetListAsync(o => qIds.Contains(o.QuestionId));
+
+            options = options
+                .OrderBy(o => o.CreationTime)
+                .ThenBy(o => o.Id)
+                .ToList();
 
             return new TestRunDto
             {
@@ -122,20 +175,34 @@ namespace DenemeTest.Application.Exams
                 DurationMinutes = test.DurationMinutes,
                 StartAt = test.StartAt,
                 EndAt = test.EndAt,
-                Questions = questions.Select(q => new QuestionRunDto
+                Questions = questions.Select(q =>
                 {
-                    Id = q.Id,
-                    Text = q.Text,
-                    Type = MapToDto(q.Type),
-                    Points = q.Points,
-                    Options = options
+                    var questionOptions = options
                         .Where(o => o.QuestionId == q.Id)
-                        .Select(o => new QuestionOptionRunDto
-                        {
-                            Id = o.Id,
-                            Text = o.Text
-                        })
-                        .ToList()
+                        .ToList();
+
+                    if (test.ShuffleOptions)
+                    {
+                        questionOptions = StableShuffle(
+                            questionOptions,
+                            $"{sessionId:N}:{q.Id:N}:options"
+                        );
+                    }
+
+                    return new QuestionRunDto
+                    {
+                        Id = q.Id,
+                        Text = q.Text,
+                        Type = MapToDto(q.Type),
+                        Points = q.Points,
+                        Options = questionOptions
+                            .Select(o => new QuestionOptionRunDto
+                            {
+                                Id = o.Id,
+                                Text = o.Text
+                            })
+                            .ToList()
+                    };
                 }).ToList()
             };
         }
@@ -144,12 +211,64 @@ namespace DenemeTest.Application.Exams
 
         public async Task SubmitAnswerAsync(SubmitAnswerDto input)
         {
+            if (input.SessionId == Guid.Empty)
+            {
+                throw new UserFriendlyException("Oturum bilgisi boş olamaz.");
+            }
+
+            if (input.QuestionId == Guid.Empty)
+            {
+                throw new UserFriendlyException("Soru bilgisi boş olamaz.");
+            }
+
             var sess = await _sessionRepo.GetAsync(input.SessionId);
 
             if (sess.IsCancelled)
             {
                 throw new UserFriendlyException("Oturum iptal edildi.");
             }
+
+            if (sess.FinishedAt != null)
+            {
+                throw new UserFriendlyException("Tamamlanmış sınava cevap kaydedilemez.");
+            }
+
+            var question = await _questionRepo.GetAsync(input.QuestionId);
+
+            if (question.TestId != sess.TestId)
+            {
+                throw new UserFriendlyException("Bu soru ilgili sınava ait değil.");
+            }
+
+            Guid[]? selectedOptionIds = null;
+
+            if (question.Type == QuestionType.MultipleChoice)
+            {
+                selectedOptionIds = input.SelectedOptionIds?
+                    .Where(x => x != Guid.Empty)
+                    .Distinct()
+                    .ToArray() ?? Array.Empty<Guid>();
+
+                if (selectedOptionIds.Length > 0)
+                {
+                    var validOptionIds = await _optionRepo.GetListAsync(o =>
+                        o.QuestionId == question.Id &&
+                        selectedOptionIds.Contains(o.Id)
+                    );
+
+                    var validIdSet = validOptionIds
+                        .Select(x => x.Id)
+                        .ToHashSet();
+
+                    selectedOptionIds = selectedOptionIds
+                        .Where(validIdSet.Contains)
+                        .ToArray();
+                }
+            }
+
+            var textAnswer = question.Type == QuestionType.MultipleChoice
+                ? null
+                : input.TextAnswer;
 
             var exist = await _answerRepo.FirstOrDefaultAsync(
                 a => a.ExamSessionId == input.SessionId && a.QuestionId == input.QuestionId);
@@ -160,16 +279,16 @@ namespace DenemeTest.Application.Exams
                     GuidGenerator.Create(),
                     input.SessionId,
                     input.QuestionId,
-                    input.TextAnswer,
-                    input.SelectedOptionIds
+                    textAnswer,
+                    selectedOptionIds
                 );
 
                 await _answerRepo.InsertAsync(exist, autoSave: true);
             }
             else
             {
-                exist.UpdateText(input.TextAnswer);
-                exist.UpdateOptions(input.SelectedOptionIds);
+                exist.UpdateText(textAnswer);
+                exist.UpdateOptions(selectedOptionIds);
 
                 await _answerRepo.UpdateAsync(exist, autoSave: true);
             }
@@ -181,23 +300,36 @@ namespace DenemeTest.Application.Exams
         {
             var sess = await _sessionRepo.GetAsync(sessionId);
 
-            if (sess.IsCancelled)
-            {
-                throw new UserFriendlyException("Oturum iptal.");
-            }
+            /*
+             * İptal edilmiş oturumlarda da puan hesaplamaya izin veriyoruz.
+             * Çünkü politika ihlali / kullanıcı iptali anında adayın o ana kadar
+             * aldığı puanı rapora yazmak istiyoruz.
+             */
 
             var questions = await _questionRepo.GetListAsync(q => q.TestId == sess.TestId);
+
+            questions = questions
+                .OrderBy(q => q.CreationTime)
+                .ThenBy(q => q.Id)
+                .ToList();
+
             var qIds = questions.Select(q => q.Id).ToList();
 
             var options = await _optionRepo.GetListAsync(o => qIds.Contains(o.QuestionId));
+
             var answers = await _answerRepo.GetListAsync(a => a.ExamSessionId == sessionId);
 
-            var totalPoints = Math.Max(1, questions.Sum(q => q.Points));
+            var totalPoints = Math.Max(1, questions.Sum(q => Math.Max(0, q.Points)));
             var earned = 0;
 
             foreach (var q in questions)
             {
                 var ans = answers.FirstOrDefault(a => a.QuestionId == q.Id);
+
+                if (q.Points <= 0)
+                {
+                    continue;
+                }
 
                 if (q.Type == QuestionType.MultipleChoice)
                 {
@@ -208,10 +340,11 @@ namespace DenemeTest.Application.Exams
                         .ToArray();
 
                     var chosen = (ans?.SelectedOptionIds ?? Array.Empty<Guid>())
+                        .Distinct()
                         .OrderBy(x => x)
                         .ToArray();
 
-                    if (correct.SequenceEqual(chosen))
+                    if (correct.Length > 0 && correct.SequenceEqual(chosen))
                     {
                         earned += q.Points;
                     }
@@ -221,6 +354,8 @@ namespace DenemeTest.Application.Exams
                     var candText = ans?.TextAnswer ?? string.Empty;
                     var (score0_100, _) = await _classic.ScoreAsync(q.Text, candText);
 
+                    score0_100 = NormalizeScore(score0_100);
+
                     earned += (int)Math.Round(q.Points * (score0_100 / 100.0));
                 }
                 else if (q.Type == QuestionType.Coding)
@@ -229,7 +364,7 @@ namespace DenemeTest.Application.Exams
                 }
             }
 
-            var finalScore = (int)Math.Round(100.0 * earned / totalPoints);
+            var finalScore = NormalizeScore((int)Math.Round(100.0 * earned / totalPoints));
 
             var existing = await _scoreRepo.FirstOrDefaultAsync(s => s.ExamSessionId == sessionId);
             if (existing != null)
@@ -237,11 +372,15 @@ namespace DenemeTest.Application.Exams
                 await _scoreRepo.DeleteAsync(existing, autoSave: true);
             }
 
+            var note = sess.IsCancelled
+                ? "Auto-computed for cancelled session (MCQ + classic + coding)"
+                : "Auto-computed (MCQ + classic + coding)";
+
             var score = new Score(
                 GuidGenerator.Create(),
                 sessionId,
                 finalScore,
-                "Auto-computed (MCQ + classic + coding)"
+                note
             );
 
             await _scoreRepo.InsertAsync(score, autoSave: true);
@@ -261,6 +400,11 @@ namespace DenemeTest.Application.Exams
             }
 
             var testCases = await _codeTestRepo.GetListAsync(x => x.QuestionId == question.Id);
+
+            testCases = testCases
+                .OrderBy(x => x.CreationTime)
+                .ThenBy(x => x.Id)
+                .ToList();
 
             if (testCases.Count == 0)
             {
@@ -307,13 +451,17 @@ namespace DenemeTest.Application.Exams
             var ratio = passedWeight / (double)totalWeight;
             var earnedPoint = (int)Math.Round(question.Points * ratio);
 
-            return earnedPoint;
-        }
+            if (earnedPoint < 0)
+            {
+                return 0;
+            }
 
-        private static string HashToken(string rawToken)
-        {
-            var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(rawToken));
-            return Convert.ToHexString(bytes).ToLowerInvariant();
+            if (earnedPoint > question.Points)
+            {
+                return question.Points;
+            }
+
+            return earnedPoint;
         }
 
         // -------------------- HELPERS --------------------
@@ -327,6 +475,49 @@ namespace DenemeTest.Application.Exams
                 QuestionType.Coding => QuestionTypeDto.Coding,
                 _ => QuestionTypeDto.Classic
             };
+        }
+
+        private static int NormalizeScore(int score)
+        {
+            if (score < 0)
+            {
+                return 0;
+            }
+
+            if (score > 100)
+            {
+                return 100;
+            }
+
+            return score;
+        }
+
+        private static string HashToken(string rawToken)
+        {
+            var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(rawToken));
+            return Convert.ToHexString(bytes).ToLowerInvariant();
+        }
+
+        private static List<T> StableShuffle<T>(IEnumerable<T> source, string seed)
+        {
+            var list = source.ToList();
+
+            if (list.Count <= 1)
+            {
+                return list;
+            }
+
+            var seedBytes = SHA256.HashData(Encoding.UTF8.GetBytes(seed));
+            var seedValue = BitConverter.ToInt32(seedBytes, 0);
+            var random = new Random(seedValue);
+
+            for (var i = list.Count - 1; i > 0; i--)
+            {
+                var j = random.Next(i + 1);
+                (list[i], list[j]) = (list[j], list[i]);
+            }
+
+            return list;
         }
     }
 }

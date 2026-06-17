@@ -1,8 +1,20 @@
 ﻿@page "/admin/tests"
+@using System.Globalization
 @using DenemeTest.Exams.Dtos
 @inject DenemeTest.Application.Exams.ITestAppService TestApp
+@inject IJSRuntime JS
 
 <h3>Testler</h3>
+
+@if (!string.IsNullOrWhiteSpace(_errorMessage))
+{
+    <div class="alert alert-danger">@_errorMessage</div>
+}
+
+@if (!string.IsNullOrWhiteSpace(_successMessage))
+{
+    <div class="alert alert-success">@_successMessage</div>
+}
 
 @if (_loading)
 {
@@ -10,93 +22,179 @@
 }
 else
 {
-    <button class="btn btn-primary mb-3" @onclick="ShowCreateModal">Yeni Test</button>
+    <button class="btn btn-primary mb-3" @onclick="ShowCreateModal">
+        Yeni Test
+    </button>
 
-    <table class="table table-striped">
-        <thead>
-            <tr>
-                <th>Ad</th>
-                <th>Süre (dk)</th>
-                <th>Başlangıç</th>
-                <th>Bitiş</th>
-                <th>Geçme Puanı</th>
-                <th>Ş. Sorular</th>
-                <th>Ş. Şıklar</th>
-                <th style="width:160px">İşlemler</th>
-            </tr>
-        </thead>
-        <tbody>
-            @foreach (var t in _items)
-            {
+    @if (_items.Count == 0)
+    {
+        <div class="alert alert-info">
+            Henüz test bulunmuyor.
+        </div>
+    }
+    else
+    {
+        <table class="table table-striped align-middle">
+            <thead>
                 <tr>
-                    <td>@t.Name</td>
-                    <td>@t.DurationMinutes</td>
-                    <td>@(t.StartAt?.ToString("g") ?? "-")</td>
-                    <td>@(t.EndAt?.ToString("g") ?? "-")</td>
-                    <td>@t.PassScore</td>
-                    <td>@(t.ShuffleQuestions ? "Evet" : "Hayır")</td>
-                    <td>@(t.ShuffleOptions ? "Evet" : "Hayır")</td>
-                    <td>
-                        <button class="btn btn-sm btn-outline-secondary me-1" @onclick="() => EditTest(t.Id)">Düzenle</button>
-                        <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteTest(t.Id)">Sil</button>
-                    </td>
+                    <th>Ad</th>
+                    <th>Süre (dk)</th>
+                    <th>Başlangıç</th>
+                    <th>Bitiş</th>
+                    <th>Geçme Puanı</th>
+                    <th>Ş. Sorular</th>
+                    <th>Ş. Şıklar</th>
+                    <th style="width:170px">İşlemler</th>
                 </tr>
-            }
-        </tbody>
-    </table>
+            </thead>
+
+            <tbody>
+                @foreach (var t in _items)
+                {
+                    <tr>
+                        <td>@t.Name</td>
+                        <td>@t.DurationMinutes</td>
+                        <td>@(t.StartAt?.ToString("yyyy-MM-dd HH:mm") ?? "-")</td>
+                        <td>@(t.EndAt?.ToString("yyyy-MM-dd HH:mm") ?? "-")</td>
+                        <td>@t.PassScore</td>
+                        <td>
+                            <span class="badge @(t.ShuffleQuestions ? "bg-success" : "bg-secondary")">
+                                @(t.ShuffleQuestions ? "Evet" : "Hayır")
+                            </span>
+                        </td>
+                        <td>
+                            <span class="badge @(t.ShuffleOptions ? "bg-success" : "bg-secondary")">
+                                @(t.ShuffleOptions ? "Evet" : "Hayır")
+                            </span>
+                        </td>
+                        <td>
+                            <button class="btn btn-sm btn-outline-secondary me-1"
+                                    @onclick="() => EditTest(t.Id)">
+                                Düzenle
+                            </button>
+
+                            <button class="btn btn-sm btn-outline-danger"
+                                    @onclick="() => DeleteTest(t.Id)">
+                                Sil
+                            </button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
 }
 
-<!-- Basit modal -->
 @if (_showModal)
 {
     <div class="modal fade show d-block" style="background: rgba(0,0,0,.5);">
         <div class="modal-dialog">
-            <div class="modal-content p-3">
-                <h5 class="mb-3">Yeni Test</h5>
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        @(_editId == null ? "Yeni Test" : "Test Düzenle")
+                    </h5>
 
-                <div class="mb-2">
-                    <label>Ad</label>
-                    <InputText @bind-Value="CreateModel.Name" class="form-control" />
+                    <button type="button"
+                            class="btn-close"
+                            disabled="@_saving"
+                            @onclick="HideModal">
+                    </button>
                 </div>
 
-                <div class="mb-2">
-                    <label>Açıklama</label>
-                    <InputTextArea @bind-Value="CreateModel.Description" class="form-control" />
+                <div class="modal-body">
+                    @if (!string.IsNullOrWhiteSpace(_modalError))
+                    {
+                        <div class="alert alert-danger">
+                            @_modalError
+                        </div>
+                    }
+
+                    <div class="mb-2">
+                        <label class="form-label">Ad</label>
+                        <InputText @bind-Value="CreateModel.Name" class="form-control" />
+                    </div>
+
+                    <div class="mb-2">
+                        <label class="form-label">Açıklama</label>
+                        <InputTextArea @bind-Value="CreateModel.Description" class="form-control" />
+                    </div>
+
+                    <div class="mb-2">
+                        <label class="form-label">Süre (dakika)</label>
+                        <InputNumber @bind-Value="CreateModel.DurationMinutes" class="form-control" />
+                    </div>
+
+                    <div class="mb-2">
+                        <label class="form-label">Başlangıç</label>
+
+                        <div class="input-group">
+                            <input type="datetime-local"
+                                   class="form-control"
+                                   value="@FormatDateTimeLocal(CreateModel.StartAt)"
+                                   @onchange="OnStartAtChanged" />
+
+                            <button type="button"
+                                    class="btn btn-outline-secondary"
+                                    @onclick="ClearStartAt">
+                                Temizle
+                            </button>
+                        </div>
+
+                        <small class="text-muted">
+                            Boş bırakırsan test hemen erişilebilir olur.
+                        </small>
+                    </div>
+
+                    <div class="mb-2">
+                        <label class="form-label">Bitiş</label>
+
+                        <div class="input-group">
+                            <input type="datetime-local"
+                                   class="form-control"
+                                   value="@FormatDateTimeLocal(CreateModel.EndAt)"
+                                   @onchange="OnEndAtChanged" />
+
+                            <button type="button"
+                                    class="btn btn-outline-secondary"
+                                    @onclick="ClearEndAt">
+                                Temizle
+                            </button>
+                        </div>
+
+                        <small class="text-muted">
+                            Boş bırakırsan bitiş zamanı kontrolü yapılmaz.
+                        </small>
+                    </div>
+
+                    <div class="mb-2">
+                        <label class="form-label">Geçme Puanı</label>
+                        <InputNumber @bind-Value="CreateModel.PassScore" class="form-control" />
+                    </div>
+
+                    <div class="form-check mb-2">
+                        <InputCheckbox @bind-Value="CreateModel.ShuffleQuestions" class="form-check-input" />
+                        <label class="form-check-label">Soruları karıştır</label>
+                    </div>
+
+                    <div class="form-check mb-3">
+                        <InputCheckbox @bind-Value="CreateModel.ShuffleOptions" class="form-check-input" />
+                        <label class="form-check-label">Şıkları karıştır</label>
+                    </div>
                 </div>
 
-                <div class="mb-2">
-                    <label>Süre (dakika)</label>
-                    <InputNumber @bind-Value="CreateModel.DurationMinutes" class="form-control" />
-                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary"
+                            disabled="@_saving"
+                            @onclick="HideModal">
+                        Vazgeç
+                    </button>
 
-                <div class="mb-2">
-                    <label>Başlangıç</label>
-                    <InputDate @bind-Value="CreateModel.StartAt" class="form-control" />
-                </div>
-
-                <div class="mb-2">
-                    <label>Bitiş</label>
-                    <InputDate @bind-Value="CreateModel.EndAt" class="form-control" />
-                </div>
-
-                <div class="mb-2">
-                    <label>Geçme Puanı</label>
-                    <InputNumber @bind-Value="CreateModel.PassScore" class="form-control" />
-                </div>
-
-                <div class="form-check mb-2">
-                    <InputCheckbox @bind-Value="CreateModel.ShuffleQuestions" class="form-check-input" />
-                    <label class="form-check-label">Soruları karıştır</label>
-                </div>
-
-                <div class="form-check mb-3">
-                    <InputCheckbox @bind-Value="CreateModel.ShuffleOptions" class="form-check-input" />
-                    <label class="form-check-label">Şıkları karıştır</label>
-                </div>
-
-                <div class="d-flex justify-content-end">
-                    <button class="btn btn-secondary me-2" @onclick="HideModal">Vazgeç</button>
-                    <button class="btn btn-primary" @onclick="SaveTest">Kaydet</button>
+                    <button class="btn btn-primary"
+                            disabled="@_saving"
+                            @onclick="SaveTest">
+                        @(_saving ? "Kaydediliyor..." : "Kaydet")
+                    </button>
                 </div>
             </div>
         </div>
@@ -105,10 +203,18 @@ else
 
 @code {
     private bool _loading = true;
+    private bool _saving;
+
     private List<TestDto> _items = new();
 
     private bool _showModal = false;
+    private Guid? _editId;
+
     private CreateUpdateTestDto CreateModel = new();
+
+    private string? _errorMessage;
+    private string? _successMessage;
+    private string? _modalError;
 
     protected override async Task OnInitializedAsync()
     {
@@ -117,57 +223,271 @@ else
 
     private async Task LoadAsync()
     {
-        var list = await TestApp.GetListAsync(new Volo.Abp.Application.Dtos.PagedAndSortedResultRequestDto());
-        _items = list.Items.ToList();
-        _loading = false;
+        _loading = true;
+        _errorMessage = null;
+
+        try
+        {
+            var list = await TestApp.GetListAsync(new Volo.Abp.Application.Dtos.PagedAndSortedResultRequestDto());
+            _items = list.Items.ToList();
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = ex.Message;
+            _items = new List<TestDto>();
+        }
+        finally
+        {
+            _loading = false;
+        }
     }
 
     private void ShowCreateModal()
     {
+        _editId = null;
+
         CreateModel = new CreateUpdateTestDto
         {
+            Name = string.Empty,
+            Description = string.Empty,
             DurationMinutes = 60,
             PassScore = 50,
             ShuffleQuestions = true,
-            ShuffleOptions = true
+            ShuffleOptions = true,
+            StartAt = null,
+            EndAt = null
         };
+
+        _modalError = null;
+        _successMessage = null;
         _showModal = true;
-    }
-
-    private void HideModal()
-    {
-        _showModal = false;
-    }
-
-    private async Task SaveTest()
-    {
-        await TestApp.CreateAsync(CreateModel);
-        _showModal = false;
-        await LoadAsync();
-        StateHasChanged();
     }
 
     private async Task EditTest(Guid id)
     {
-        var cur = await TestApp.GetAsync(id);
-        var upd = new CreateUpdateTestDto
+        _modalError = null;
+        _successMessage = null;
+
+        try
         {
-            Name = cur.Name + " (Düzenlendi)",
-            Description = cur.Description,
-            DurationMinutes = cur.DurationMinutes,
-            StartAt = cur.StartAt,
-            EndAt = cur.EndAt,
-            PassScore = cur.PassScore,
-            ShuffleQuestions = cur.ShuffleQuestions,
-            ShuffleOptions = cur.ShuffleOptions
-        };
-        await TestApp.UpdateAsync(id, upd);
-        await LoadAsync();
+            var cur = await TestApp.GetAsync(id);
+
+            _editId = id;
+
+            CreateModel = new CreateUpdateTestDto
+            {
+                Name = cur.Name,
+                Description = cur.Description,
+                DurationMinutes = cur.DurationMinutes,
+                StartAt = cur.StartAt,
+                EndAt = cur.EndAt,
+                PassScore = cur.PassScore,
+                ShuffleQuestions = cur.ShuffleQuestions,
+                ShuffleOptions = cur.ShuffleOptions
+            };
+
+            _showModal = true;
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = ex.Message;
+        }
+    }
+
+    private void HideModal()
+    {
+        if (_saving)
+        {
+            return;
+        }
+
+        _showModal = false;
+        _modalError = null;
+        _editId = null;
+    }
+
+    private async Task SaveTest()
+    {
+        if (_saving)
+        {
+            return;
+        }
+
+        _saving = true;
+        _modalError = null;
+        _successMessage = null;
+
+        try
+        {
+            NormalizeModel();
+
+            var validationError = ValidateModel();
+            if (!string.IsNullOrWhiteSpace(validationError))
+            {
+                _modalError = validationError;
+                return;
+            }
+
+            if (_editId == null)
+            {
+                await TestApp.CreateAsync(CreateModel);
+                _successMessage = "Test oluşturuldu.";
+            }
+            else
+            {
+                await TestApp.UpdateAsync(_editId.Value, CreateModel);
+                _successMessage = "Test güncellendi.";
+            }
+
+            _showModal = false;
+            _editId = null;
+
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _modalError = ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+            StateHasChanged();
+        }
     }
 
     private async Task DeleteTest(Guid id)
     {
-        await TestApp.DeleteAsync(id);
-        await LoadAsync();
+        _errorMessage = null;
+        _successMessage = null;
+
+        var confirmed = await JsConfirm("Bu testi silmek istediğine emin misin? Bu teste bağlı sorular, davetler, oturumlar ve kayıtlar da silinebilir.");
+
+        if (!confirmed)
+        {
+            return;
+        }
+
+        try
+        {
+            await TestApp.DeleteAsync(id);
+            _successMessage = "Test silindi.";
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = ex.Message;
+        }
+    }
+
+    private void NormalizeModel()
+    {
+        CreateModel.Name = CreateModel.Name?.Trim() ?? string.Empty;
+        CreateModel.Description = CreateModel.Description?.Trim();
+
+        if (CreateModel.DurationMinutes <= 0)
+        {
+            CreateModel.DurationMinutes = 60;
+        }
+
+        if (CreateModel.PassScore < 0)
+        {
+            CreateModel.PassScore = 0;
+        }
+
+        if (CreateModel.PassScore > 100)
+        {
+            CreateModel.PassScore = 100;
+        }
+    }
+
+    private string? ValidateModel()
+    {
+        if (string.IsNullOrWhiteSpace(CreateModel.Name))
+        {
+            return "Test adı boş olamaz.";
+        }
+
+        if (CreateModel.DurationMinutes <= 0)
+        {
+            return "Süre 1 dakika veya daha fazla olmalı.";
+        }
+
+        if (CreateModel.PassScore < 0 || CreateModel.PassScore > 100)
+        {
+            return "Geçme puanı 0 ile 100 arasında olmalı.";
+        }
+
+        if (CreateModel.StartAt.HasValue &&
+            CreateModel.EndAt.HasValue &&
+            CreateModel.EndAt.Value < CreateModel.StartAt.Value)
+        {
+            return "Bitiş tarihi başlangıç tarihinden önce olamaz.";
+        }
+
+        return null;
+    }
+
+    private static string FormatDateTimeLocal(DateTime? value)
+    {
+        return value.HasValue
+            ? value.Value.ToString("yyyy-MM-ddTHH:mm")
+            : string.Empty;
+    }
+
+    private void OnStartAtChanged(ChangeEventArgs e)
+    {
+        CreateModel.StartAt = ParseDateTimeLocal(e.Value?.ToString());
+    }
+
+    private void OnEndAtChanged(ChangeEventArgs e)
+    {
+        CreateModel.EndAt = ParseDateTimeLocal(e.Value?.ToString());
+    }
+
+    private void ClearStartAt()
+    {
+        CreateModel.StartAt = null;
+    }
+
+    private void ClearEndAt()
+    {
+        CreateModel.EndAt = null;
+    }
+
+    private static DateTime? ParseDateTimeLocal(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        if (DateTime.TryParseExact(
+                value,
+                "yyyy-MM-ddTHH:mm",
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.None,
+                out var parsed))
+        {
+            return parsed;
+        }
+
+        if (DateTime.TryParse(value, out parsed))
+        {
+            return parsed;
+        }
+
+        return null;
+    }
+
+    private async Task<bool> JsConfirm(string message)
+    {
+        try
+        {
+            return await JS.InvokeAsync<bool>("confirm", message);
+        }
+        catch
+        {
+            return true;
+        }
     }
 }

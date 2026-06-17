@@ -31,20 +31,56 @@ else
                 ? "badge bg-danger"
                 : (_detail.EndTime.HasValue ? "badge bg-success" : "badge bg-secondary");
 
+                var scoreCss = _detail.Score.HasValue
+                ? (_detail.Score.Value >= 70 ? "badge bg-success" : _detail.Score.Value >= 40 ? "badge bg-warning text-dark" : "badge bg-danger")
+                : "badge bg-secondary";
+
                 var cacheKey = DateTimeOffset.Now.ToUnixTimeSeconds();
 
-                var candidateVideoUrl = $"/api/recordings/download?sessionId={SessionId}&kind=cam&v={cacheKey}";
-                var screenVideoUrl = $"/api/recordings/download?sessionId={SessionId}&kind=screen&v={cacheKey}";
+                var candidateVideoUrl = AppendCache(
+                string.IsNullOrWhiteSpace(_detail.CandidateRecordingUrl)
+                ? $"/api/recordings/download?sessionId={SessionId}&kind=cam"
+                : _detail.CandidateRecordingUrl,
+                cacheKey
+                );
+
+                var screenVideoUrl = AppendCache(
+                string.IsNullOrWhiteSpace(_detail.ScreenRecordingUrl)
+                ? $"/api/recordings/download?sessionId={SessionId}&kind=screen"
+                : _detail.ScreenRecordingUrl,
+                cacheKey
+                );
             }
 
-            <p><b>Durum:</b> <span class="@statusCss">@statusText</span></p>
-            <p><b>Başlangıç:</b> @(_detail.StartTime?.ToString("yyyy-MM-dd HH:mm") ?? "-")</p>
-            <p><b>Bitiş:</b> @(_detail.EndTime?.ToString("yyyy-MM-dd HH:mm") ?? "-")</p>
-            <p><b>İhlal sayısı:</b> @_detail.Violations</p>
+            <div class="row">
+                <div class="col-md-6">
+                    <p><b>Durum:</b> <span class="@statusCss">@statusText</span></p>
+                    <p><b>Başlangıç:</b> @(_detail.StartTime?.ToString("yyyy-MM-dd HH:mm") ?? "-")</p>
+                    <p><b>Bitiş:</b> @(_detail.EndTime?.ToString("yyyy-MM-dd HH:mm") ?? "-")</p>
+                </div>
+
+                <div class="col-md-6">
+                    <p>
+                        <b>Puan:</b>
+                        <span class="@scoreCss">
+                            @(_detail.Score.HasValue ? $"{_detail.Score}/100" : "Hesaplanmadı")
+                        </span>
+                    </p>
+
+                    <p><b>İhlal sayısı:</b> @_detail.Violations</p>
+
+                    @if (!string.IsNullOrWhiteSpace(_detail.ScoreExplanation))
+                    {
+                        <p><b>Puan açıklaması:</b> @_detail.ScoreExplanation</p>
+                    }
+                </div>
+            </div>
 
             @if (_detail.IsCancelled && !string.IsNullOrWhiteSpace(_detail.CancelReason))
             {
-                <p><b>İptal sebebi:</b> @_detail.CancelReason</p>
+                <div class="alert alert-danger mt-2">
+                    <b>İptal sebebi:</b> @_detail.CancelReason
+                </div>
             }
 
             <h5 class="mt-4">Sınav Kayıtları</h5>
@@ -73,7 +109,7 @@ else
                                 Tarayıcınız video oynatmayı desteklemiyor.
                             </video>
 
-                            <div class="mt-3 d-flex gap-2">
+                            <div class="mt-3 d-flex gap-2 flex-wrap">
                                 <a class="btn btn-sm btn-outline-primary"
                                    href="@candidateVideoUrl"
                                    target="_blank">
@@ -108,7 +144,7 @@ else
                                 Tarayıcınız video oynatmayı desteklemiyor.
                             </video>
 
-                            <div class="mt-3 d-flex gap-2">
+                            <div class="mt-3 d-flex gap-2 flex-wrap">
                                 <a class="btn btn-sm btn-outline-primary"
                                    href="@screenVideoUrl"
                                    target="_blank">
@@ -125,6 +161,41 @@ else
                     </div>
                 </div>
             </div>
+
+            <h5 class="mt-4">Proctoring İhlal Kayıtları</h5>
+
+            @if (_detail.ProctoringEvents == null || !_detail.ProctoringEvents.Any())
+            {
+                <div class="alert alert-secondary">
+                    Bu oturuma ait proctoring ihlal kaydı bulunamadı.
+                </div>
+            }
+            else
+            {
+                <div class="table-responsive">
+                    <table class="table table-sm table-bordered align-middle">
+                        <thead>
+                            <tr>
+                                <th style="width:180px">Zaman</th>
+                                <th style="width:180px">Tip</th>
+                                <th>Detay</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var item in _detail.ProctoringEvents)
+                            {
+                                <tr>
+                                    <td>@item.CreationTime.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                                    <td>
+                                        <span class="badge bg-danger">@item.Type</span>
+                                    </td>
+                                    <td>@(string.IsNullOrWhiteSpace(item.Detail) ? "-" : item.Detail)</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
 
             <div class="mt-3">
                 <button class="btn btn-sm btn-outline-primary" @onclick="GoBack">
@@ -263,15 +334,64 @@ else
     {
         @foreach (var ans in _detail.Answers)
         {
-            <div class="card mb-2">
+            var answerCardCss = ans.IsCorrect.HasValue
+                ? (ans.IsCorrect.Value ? "card mb-2 border-success" : "card mb-2 border-danger")
+                : "card mb-2";
+
+            var answerBadgeCss = ans.IsCorrect.HasValue
+                ? (ans.IsCorrect.Value ? "badge bg-success" : "badge bg-danger")
+                : "badge bg-secondary";
+
+            var answerBadgeText = ans.IsCorrect.HasValue
+                ? (ans.IsCorrect.Value ? "Doğru" : "Yanlış")
+                : "Manuel/Metinsel";
+
+            <div class="@answerCardCss">
                 <div class="card-body">
-                    <h6>@ans.QuestionText</h6>
+                    <div class="d-flex justify-content-between align-items-start gap-2">
+                        <h6>@ans.QuestionText</h6>
+
+                        <div class="text-end">
+                            <span class="@answerBadgeCss">@answerBadgeText</span>
+                            <div class="small text-muted mt-1">@ans.QuestionPoints puan</div>
+                        </div>
+                    </div>
 
                     <p><b>Tip:</b> @ans.QuestionType</p>
 
-                    @if (ans.SelectedOptions is not null && ans.SelectedOptions.Any())
+                    @if (ans.SelectedOptions is not null)
                     {
-                        <p><b>Seçilen:</b> @string.Join(", ", ans.SelectedOptions)</p>
+                        <div class="mb-2">
+                            <b>Seçilen cevap:</b>
+
+                            @if (ans.SelectedOptions.Any())
+                            {
+                                <ul class="mb-0 mt-1">
+                                    @foreach (var selected in ans.SelectedOptions)
+                                    {
+                                        <li>@selected</li>
+                                    }
+                                </ul>
+                            }
+                            else
+                            {
+                                <span class="text-muted"> Cevap seçilmemiş.</span>
+                            }
+                        </div>
+                    }
+
+                    @if (ans.CorrectOptions is not null && ans.CorrectOptions.Any())
+                    {
+                        <div class="mb-2">
+                            <b>Doğru cevap:</b>
+
+                            <ul class="mb-0 mt-1">
+                                @foreach (var correct in ans.CorrectOptions)
+                                {
+                                    <li>@correct</li>
+                                }
+                            </ul>
+                        </div>
                     }
 
                     @if (!string.IsNullOrWhiteSpace(ans.TextAnswer))
@@ -285,8 +405,19 @@ else
                         }
                         else
                         {
-                            <p><b>Cevap:</b> @ans.TextAnswer</p>
+                            <div class="mb-2">
+                                <b>Cevap:</b>
+                                <div class="border rounded bg-light p-2 mt-1">
+                                    @ans.TextAnswer
+                                </div>
+                            </div>
                         }
+                    }
+                    else if (ans.SelectedOptions == null || !ans.SelectedOptions.Any())
+                    {
+                        <div class="alert alert-secondary small mb-0">
+                            Aday bu soru için cevap göndermemiş.
+                        </div>
                     }
 
                     @if (!string.IsNullOrWhiteSpace(ans.CodeOutput))
@@ -323,6 +454,18 @@ else
     private void GoBack()
     {
         Nav.NavigateTo("/admin/reports");
+    }
+
+    private static string AppendCache(string url, long cacheKey)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            return url;
+        }
+
+        return url.Contains('?')
+            ? $"{url}&v={cacheKey}"
+            : $"{url}?v={cacheKey}";
     }
 
     private static List<string> SplitFlags(string? flags)

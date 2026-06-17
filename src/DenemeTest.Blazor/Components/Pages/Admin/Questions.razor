@@ -4,11 +4,21 @@
 @inject DenemeTest.Application.Exams.IQuestionAppService QuestionApp
 @inject DenemeTest.Application.Exams.ITestAppService TestApp
 @inject DenemeTest.Exams.ICodeTestCaseAppService CodeTestCaseApp
+@inject IJSRuntime JS
 
-@* DTO enum için kısa ad *@
 @using QT = DenemeTest.Exams.Dtos.QuestionTypeDto
 
 <h3>Sorular</h3>
+
+@if (!string.IsNullOrWhiteSpace(_errorMessage))
+{
+    <div class="alert alert-danger">@_errorMessage</div>
+}
+
+@if (!string.IsNullOrWhiteSpace(_successMessage))
+{
+    <div class="alert alert-success">@_successMessage</div>
+}
 
 @if (_loading)
 {
@@ -18,6 +28,7 @@ else
 {
     <div class="d-flex gap-2 mb-3">
         <button class="btn btn-primary" @onclick="NewQuestion">Yeni Soru</button>
+
         <select class="form-select w-auto" @onchange="OnTestFilterChanged">
             <option value="">(Tüm Testler)</option>
             @foreach (var t in _tests)
@@ -27,34 +38,50 @@ else
         </select>
     </div>
 
-    <table class="table table-striped">
-        <thead>
-            <tr>
-                <th>Test</th>
-                <th>Tür</th>
-                <th>Metin</th>
-                <th>Puan</th>
-                <th>Seçenek</th>
-                <th style="width:140px"></th>
-            </tr>
-        </thead>
-        <tbody>
-            @foreach (var q in _items)
-            {
+    @if (!_items.Any())
+    {
+        <div class="alert alert-info">
+            Henüz soru bulunmuyor.
+        </div>
+    }
+    else
+    {
+        <table class="table table-striped align-middle">
+            <thead>
                 <tr>
-                    <td>@_tests.FirstOrDefault(t => t.Id == q.TestId)?.Name</td>
-                    <td>@q.Type</td>
-                    <td>@q.Text</td>
-                    <td>@q.Points</td>
-                    <td>@(q.Options?.Count ?? 0)</td>
-                    <td>
-                        <button class="btn btn-sm btn-outline-secondary me-2" @onclick="() => EditAsync(q)">Düzenle</button>
-                        <button class="btn btn-sm btn-outline-danger" @onclick="() => Delete(q.Id)">Sil</button>
-                    </td>
+                    <th>Test</th>
+                    <th>Tür</th>
+                    <th>Metin</th>
+                    <th style="width:90px">Puan</th>
+                    <th style="width:100px">Seçenek</th>
+                    <th style="width:160px"></th>
                 </tr>
-            }
-        </tbody>
-    </table>
+            </thead>
+            <tbody>
+                @foreach (var q in _items)
+                {
+                    <tr>
+                        <td>@(_tests.FirstOrDefault(t => t.Id == q.TestId)?.Name ?? "-")</td>
+                        <td>@GetQuestionTypeText(q.Type)</td>
+                        <td>@q.Text</td>
+                        <td>@q.Points</td>
+                        <td>@(q.Options?.Count ?? 0)</td>
+                        <td>
+                            <button class="btn btn-sm btn-outline-secondary me-2"
+                                    @onclick="() => EditAsync(q)">
+                                Düzenle
+                            </button>
+
+                            <button class="btn btn-sm btn-outline-danger"
+                                    @onclick="() => Delete(q.Id)">
+                                Sil
+                            </button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
 }
 
 @if (_showModal)
@@ -66,7 +93,13 @@ else
                     <h5 class="modal-title">@(_editId == null ? "Yeni Soru" : "Soru Düzenle")</h5>
                     <button type="button" class="btn-close" @onclick="CloseModal"></button>
                 </div>
+
                 <div class="modal-body">
+                    @if (!string.IsNullOrWhiteSpace(_modalError))
+                    {
+                        <div class="alert alert-danger">@_modalError</div>
+                    }
+
                     <div class="row g-3">
                         <div class="col-md-6">
                             <label class="form-label">Test</label>
@@ -77,9 +110,10 @@ else
                                 }
                             </select>
                         </div>
+
                         <div class="col-md-3">
                             <label class="form-label">Tür</label>
-                            <select class="form-select" @bind="_form.Type">
+                            <select class="form-select" value="@_form.Type" @onchange="OnQuestionTypeChanged">
                                 <option value="@QT.MultipleChoice">Çoktan Seçmeli</option>
                                 <option value="@QT.Classic">Klasik</option>
                                 <option value="@QT.Coding">Kodlama Sorusu</option>
@@ -88,43 +122,67 @@ else
 
                         <div class="col-md-3">
                             <label class="form-label">Puan</label>
-                            <input type="number" class="form-control" @bind="_form.Points" min="1" />
+                            <input type="number"
+                                   class="form-control"
+                                   @bind="_form.Points"
+                                   min="1" />
                         </div>
 
                         <div class="col-12">
                             <label class="form-label">Soru Metni</label>
-                            <textarea class="form-control" rows="3" @bind="_form.Text"></textarea>
+                            <textarea class="form-control"
+                                      rows="3"
+                                      @bind="_form.Text">
+                                </textarea>
                         </div>
 
-                        @* Çoktan seçmeli seçenek yönetimi *@
                         @if (_form.Type == QT.MultipleChoice)
                         {
                             <div class="col-12">
                                 <label class="form-label d-block">Seçenekler</label>
 
-                                @for (int i = 0; i < _form.Options.Count; i++)
+                                @if (_form.Options == null || !_form.Options.Any())
                                 {
-                                    <div class="input-group mb-2">
-                                        <span class="input-group-text">
-                                            <input class="form-check-input mt-0" type="checkbox" @bind="_form.Options[i].IsCorrect" />
-                                        </span>
-                                        <input class="form-control"
-                                               placeholder="Seçenek metni"
-                                               @bind="_form.Options[i].Text" />
-                                        <button class="btn btn-outline-danger"
-                                                type="button"
-                                                @onclick="(() => RemoveOption(i))">
-                                            Sil
-                                        </button>
+                                    <div class="alert alert-warning small">
+                                        Bu soru için seçenek bulunmuyor. En az iki seçenek ekle ve en az bir doğru cevap işaretle.
                                     </div>
                                 }
-                                <button class="btn btn-sm btn-outline-primary" type="button" @onclick="AddOption">
+                                else
+                                {
+                                    @foreach (var option in _form.Options)
+                                    {
+                                        <div class="input-group mb-2" @key="option">
+                                            <span class="input-group-text">
+                                                <input class="form-check-input mt-0"
+                                                       type="checkbox"
+                                                       @bind="option.IsCorrect" />
+                                            </span>
+
+                                            <input class="form-control"
+                                                   placeholder="Seçenek metni"
+                                                   @bind="option.Text" />
+
+                                            <button class="btn btn-outline-danger"
+                                                    type="button"
+                                                    @onclick="() => RemoveOption(option)">
+                                                Sil
+                                            </button>
+                                        </div>
+                                    }
+                                }
+
+                                <button class="btn btn-sm btn-outline-primary"
+                                        type="button"
+                                        @onclick="AddOption">
                                     Seçenek Ekle
                                 </button>
+
+                                <small class="text-muted d-block mt-2">
+                                    Sol taraftaki kutuyu işaretlediğin seçenek doğru cevap olarak kaydedilir.
+                                </small>
                             </div>
                         }
 
-                        @* Kodlama soruları için test-case yönetimi *@
                         @if (_form.Type == QT.Coding)
                         {
                             <div class="col-12 mt-3">
@@ -151,19 +209,23 @@ else
 
                                         @foreach (var caseModel in _codeCases)
                                         {
-                                            <div class="border rounded p-2 mb-2">
+                                            <div class="border rounded p-2 mb-2" @key="caseModel">
                                                 <div class="mb-2">
                                                     <label class="form-label">Input</label>
                                                     <textarea class="form-control"
                                                               rows="2"
-                                                              @bind="caseModel.Input"></textarea>
+                                                              @bind="caseModel.Input">
+                                                                        </textarea>
                                                 </div>
+
                                                 <div class="mb-2">
                                                     <label class="form-label">Beklenen Çıktı</label>
                                                     <textarea class="form-control"
                                                               rows="2"
-                                                              @bind="caseModel.ExpectedOutput"></textarea>
+                                                              @bind="caseModel.ExpectedOutput">
+                                                                        </textarea>
                                                 </div>
+
                                                 <div class="d-flex align-items-center gap-2">
                                                     <div>
                                                         <label class="form-label">Ağırlık</label>
@@ -173,9 +235,10 @@ else
                                                                @bind="caseModel.Weight"
                                                                min="1" />
                                                     </div>
+
                                                     <button type="button"
                                                             class="btn btn-outline-danger ms-auto"
-                                                            @onclick="(() => RemoveCodeCase(caseModel))">
+                                                            @onclick="() => RemoveCodeCase(caseModel)">
                                                         Sil
                                                     </button>
                                                 </div>
@@ -189,6 +252,7 @@ else
                                                         @onclick="AddCodeCase">
                                                     Test Case Ekle
                                                 </button>
+
                                                 <button type="button"
                                                         class="btn btn-sm btn-success"
                                                         @onclick="SaveCodeCasesAsync">
@@ -196,11 +260,11 @@ else
                                                 </button>
                                             </div>
 
-                                            @* Kaydetme bildirimleri *@
                                             @if (!string.IsNullOrEmpty(_codeCasesInfo))
                                             {
                                                 <span class="text-success small">@_codeCasesInfo</span>
                                             }
+
                                             @if (!string.IsNullOrEmpty(_codeCasesError))
                                             {
                                                 <span class="text-danger small">@_codeCasesError</span>
@@ -212,9 +276,19 @@ else
                         }
                     </div>
                 </div>
+
                 <div class="modal-footer">
-                    <button class="btn btn-secondary" @onclick="CloseModal">Kapat</button>
-                    <button class="btn btn-primary" @onclick="Save">Kaydet</button>
+                    <button class="btn btn-secondary"
+                            disabled="@_saving"
+                            @onclick="CloseModal">
+                        Kapat
+                    </button>
+
+                    <button class="btn btn-primary"
+                            disabled="@_saving"
+                            @onclick="Save">
+                        @(_saving ? "Kaydediliyor..." : "Kaydet")
+                    </button>
                 </div>
             </div>
         </div>
@@ -223,6 +297,8 @@ else
 
 @code {
     private bool _loading = true;
+    private bool _saving;
+
     private List<QuestionDto> _items = new();
     private List<TestDto> _tests = new();
     private string? _filterTestId;
@@ -231,11 +307,12 @@ else
     private Guid? _editId;
     private CreateUpdateQuestionDto _form = new();
 
-    // Coding test case state
     private List<CodeTestCaseDto> _codeCases = new();
     private bool _loadingCodeCases = false;
 
-    // Test-case bildirimleri
+    private string? _errorMessage;
+    private string? _successMessage;
+    private string? _modalError;
     private string? _codeCasesInfo;
     private string? _codeCasesError;
 
@@ -254,16 +331,31 @@ else
     private async Task LoadData()
     {
         _loading = true;
+        _errorMessage = null;
 
-        var list = await QuestionApp.GetListAsync(new Volo.Abp.Application.Dtos.PagedAndSortedResultRequestDto());
-        var all = list.Items.ToList();
+        try
+        {
+            var list = await QuestionApp.GetListAsync(new Volo.Abp.Application.Dtos.PagedAndSortedResultRequestDto());
+            var all = list.Items.ToList();
 
-        if (!string.IsNullOrWhiteSpace(_filterTestId) && Guid.TryParse(_filterTestId, out var tid))
-            _items = all.Where(x => x.TestId == tid).ToList();
-        else
-            _items = all;
-
-        _loading = false;
+            if (!string.IsNullOrWhiteSpace(_filterTestId) && Guid.TryParse(_filterTestId, out var tid))
+            {
+                _items = all.Where(x => x.TestId == tid).ToList();
+            }
+            else
+            {
+                _items = all;
+            }
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = ex.Message;
+            _items = new List<QuestionDto>();
+        }
+        finally
+        {
+            _loading = false;
+        }
     }
 
     private async Task OnTestFilterChanged(ChangeEventArgs e)
@@ -275,17 +367,25 @@ else
     private void NewQuestion()
     {
         _editId = null;
+
         _form = new CreateUpdateQuestionDto
         {
             Points = 1,
-            Type = QT.MultipleChoice, // DTO enum
-            Options = new List<CreateUpdateQuestionOptionDto>()
+            Type = QT.MultipleChoice,
+            Text = string.Empty,
+            Options = CreateDefaultOptions()
         };
-        if (_tests.Count > 0) _form.TestId = _tests[0].Id;
+
+        if (_tests.Count > 0)
+        {
+            _form.TestId = _tests[0].Id;
+        }
 
         _codeCases = new List<CodeTestCaseDto>();
+        _modalError = null;
         _codeCasesInfo = null;
         _codeCasesError = null;
+        _successMessage = null;
 
         _showModal = true;
     }
@@ -293,23 +393,37 @@ else
     private async Task EditAsync(QuestionDto dto)
     {
         _editId = dto.Id;
+
         _form = new CreateUpdateQuestionDto
         {
             TestId = dto.TestId,
-            Type = dto.Type, // zaten DTO enum
+            Type = dto.Type,
             Text = dto.Text,
             Points = dto.Points,
-            Options = dto.Options?.Select(o => new CreateUpdateQuestionOptionDto
-            {
-                Text = o.Text,
-                IsCorrect = o.IsCorrect
-            }).ToList()
-                      ?? new List<CreateUpdateQuestionOptionDto>()
+            Options = dto.Options?
+                .Select(o => new CreateUpdateQuestionOptionDto
+                {
+                    Text = o.Text,
+                    IsCorrect = o.IsCorrect
+                })
+                .ToList() ?? new List<CreateUpdateQuestionOptionDto>()
         };
 
+        if (_form.Type == QT.MultipleChoice && (_form.Options == null || !_form.Options.Any()))
+        {
+            _form.Options = CreateDefaultOptions();
+        }
+
+        if (_form.Type != QT.MultipleChoice)
+        {
+            _form.Options ??= new List<CreateUpdateQuestionOptionDto>();
+        }
+
         _codeCases = new List<CodeTestCaseDto>();
+        _modalError = null;
         _codeCasesInfo = null;
         _codeCasesError = null;
+        _successMessage = null;
 
         _showModal = true;
 
@@ -320,56 +434,230 @@ else
         }
     }
 
+    private async Task OnQuestionTypeChanged(ChangeEventArgs e)
+    {
+        _modalError = null;
+        _codeCasesInfo = null;
+        _codeCasesError = null;
+
+        if (Enum.TryParse<QT>(e.Value?.ToString(), out var selectedType))
+        {
+            _form.Type = selectedType;
+        }
+
+        if (_form.Type == QT.MultipleChoice)
+        {
+            _form.Options ??= new List<CreateUpdateQuestionOptionDto>();
+
+            if (!_form.Options.Any())
+            {
+                _form.Options = CreateDefaultOptions();
+            }
+        }
+
+        if (_form.Type == QT.Coding && _editId.HasValue)
+        {
+            await LoadCodeCasesAsync(_editId.Value);
+        }
+    }
+
     private async Task LoadCodeCasesAsync(Guid questionId)
     {
         _loadingCodeCases = true;
-        _codeCases = await CodeTestCaseApp.GetListByQuestionAsync(questionId);
-        _loadingCodeCases = false;
+
+        try
+        {
+            _codeCases = await CodeTestCaseApp.GetListByQuestionAsync(questionId);
+        }
+        catch (Exception ex)
+        {
+            _codeCases = new List<CodeTestCaseDto>();
+            _codeCasesError = "Test-case'ler yüklenemedi: " + ex.Message;
+        }
+        finally
+        {
+            _loadingCodeCases = false;
+        }
     }
 
     private async Task Delete(Guid id)
     {
-        if (!await JsConfirm("Silmek istediğine emin misin?")) return;
-        await QuestionApp.DeleteAsync(id);
-        await LoadData();
+        if (!await JsConfirm("Silmek istediğine emin misin?"))
+        {
+            return;
+        }
+
+        try
+        {
+            await QuestionApp.DeleteAsync(id);
+            _successMessage = "Soru silindi.";
+            await LoadData();
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = ex.Message;
+        }
+
         StateHasChanged();
     }
 
     private async Task Save()
     {
-        if (_editId == null)
-            await QuestionApp.CreateAsync(_form);
+        if (_saving)
+        {
+            return;
+        }
+
+        _saving = true;
+        _modalError = null;
+        _successMessage = null;
+
+        try
+        {
+            NormalizeFormBeforeSave();
+
+            var validationError = ValidateForm();
+            if (!string.IsNullOrWhiteSpace(validationError))
+            {
+                _modalError = validationError;
+                return;
+            }
+
+            if (_editId == null)
+            {
+                await QuestionApp.CreateAsync(_form);
+                _successMessage = "Soru oluşturuldu.";
+            }
+            else
+            {
+                await QuestionApp.UpdateAsync(_editId.Value, _form);
+                _successMessage = "Soru güncellendi.";
+            }
+
+            _showModal = false;
+            _codeCases = new List<CodeTestCaseDto>();
+            _codeCasesInfo = null;
+            _codeCasesError = null;
+
+            await LoadData();
+        }
+        catch (Exception ex)
+        {
+            _modalError = ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+            StateHasChanged();
+        }
+    }
+
+    private void NormalizeFormBeforeSave()
+    {
+        _form.Text = _form.Text?.Trim() ?? string.Empty;
+
+        if (_form.Points <= 0)
+        {
+            _form.Points = 1;
+        }
+
+        _form.Options ??= new List<CreateUpdateQuestionOptionDto>();
+
+        foreach (var option in _form.Options)
+        {
+            option.Text = option.Text?.Trim() ?? string.Empty;
+        }
+
+        if (_form.Type == QT.MultipleChoice)
+        {
+            _form.Options = _form.Options
+                .Where(option => !string.IsNullOrWhiteSpace(option.Text))
+                .ToList();
+        }
         else
-            await QuestionApp.UpdateAsync(_editId.Value, _form);
+        {
+            _form.Options = new List<CreateUpdateQuestionOptionDto>();
+        }
+    }
 
-        _showModal = false;
-        _codeCases = new List<CodeTestCaseDto>();
-        _codeCasesInfo = null;
-        _codeCasesError = null;
+    private string? ValidateForm()
+    {
+        if (_tests.Count == 0)
+        {
+            return "Önce en az bir test oluşturmalısın.";
+        }
 
-        await LoadData();
-        StateHasChanged();
+        if (_form.TestId == Guid.Empty)
+        {
+            return "Test seçmelisin.";
+        }
+
+        if (string.IsNullOrWhiteSpace(_form.Text))
+        {
+            return "Soru metni boş olamaz.";
+        }
+
+        if (_form.Points <= 0)
+        {
+            return "Puan 1 veya daha büyük olmalı.";
+        }
+
+        if (_form.Type == QT.MultipleChoice)
+        {
+            if (_form.Options == null || _form.Options.Count < 2)
+            {
+                return "Çoktan seçmeli soruda en az iki seçenek olmalı.";
+            }
+
+            if (!_form.Options.Any(option => option.IsCorrect))
+            {
+                return "Çoktan seçmeli soruda en az bir doğru seçenek işaretlemelisin.";
+            }
+        }
+
+        return null;
     }
 
     private void CloseModal()
     {
+        if (_saving)
+        {
+            return;
+        }
+
         _showModal = false;
+        _modalError = null;
         _codeCases = new List<CodeTestCaseDto>();
         _codeCasesInfo = null;
         _codeCasesError = null;
     }
 
     private void AddOption()
-        => _form.Options.Add(new CreateUpdateQuestionOptionDto { Text = "", IsCorrect = false });
-
-    private void RemoveOption(int i)
     {
-        if (i >= 0 && i < _form.Options.Count) _form.Options.RemoveAt(i);
+        _form.Options ??= new List<CreateUpdateQuestionOptionDto>();
+        _form.Options.Add(new CreateUpdateQuestionOptionDto
+        {
+            Text = string.Empty,
+            IsCorrect = false
+        });
+    }
+
+    private void RemoveOption(CreateUpdateQuestionOptionDto option)
+    {
+        if (_form.Options == null || option == null)
+        {
+            return;
+        }
+
+        _form.Options.Remove(option);
     }
 
     private void AddCodeCase()
     {
-        if (_editId == null) return;
+        if (_editId == null)
+        {
+            return;
+        }
 
         _codeCasesInfo = null;
         _codeCasesError = null;
@@ -405,6 +693,18 @@ else
 
         try
         {
+            foreach (var item in _codeCases)
+            {
+                item.QuestionId = _editId.Value;
+                item.Input ??= string.Empty;
+                item.ExpectedOutput ??= string.Empty;
+
+                if (item.Weight <= 0)
+                {
+                    item.Weight = 1;
+                }
+            }
+
             await CodeTestCaseApp.ReplaceForQuestionAsync(_editId.Value, _codeCases);
             await LoadCodeCasesAsync(_editId.Value);
             _codeCasesInfo = "Test-case'ler başarıyla kaydedildi.";
@@ -417,10 +717,37 @@ else
         StateHasChanged();
     }
 
-    // basit confirm (şimdilik true döndürüyoruz)
     private async Task<bool> JsConfirm(string message)
     {
-        await Task.CompletedTask;
-        return true;
+        try
+        {
+            return await JS.InvokeAsync<bool>("confirm", message);
+        }
+        catch
+        {
+            return true;
+        }
+    }
+
+    private static List<CreateUpdateQuestionOptionDto> CreateDefaultOptions()
+    {
+        return new List<CreateUpdateQuestionOptionDto>
+        {
+            new() { Text = string.Empty, IsCorrect = false },
+            new() { Text = string.Empty, IsCorrect = false },
+            new() { Text = string.Empty, IsCorrect = false },
+            new() { Text = string.Empty, IsCorrect = false }
+        };
+    }
+
+    private static string GetQuestionTypeText(QT type)
+    {
+        return type switch
+        {
+            QT.MultipleChoice => "Çoktan Seçmeli",
+            QT.Classic => "Klasik",
+            QT.Coding => "Kodlama",
+            _ => type.ToString()
+        };
     }
 }
