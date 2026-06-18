@@ -8,6 +8,7 @@ using System.Linq;
 using System.Reflection;
 using System.Runtime.Loader;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -16,6 +17,12 @@ namespace DenemeTest.Exams
     public class RoslynCodeRunner : ICodeRunner
     {
         private static readonly SemaphoreSlim ConsoleLock = new(1, 1);
+
+        private const int MaxCodeCharacters = 20_000;
+        private const int MaxInputCharacters = 20_000;
+        private const int MaxOutputCharacters = 100_000;
+        private const int DefaultTimeoutMilliseconds = 3000;
+        private const int MaxTimeoutMilliseconds = 5000;
 
         public async Task<CodeRunnerResult> RunAsync(CodeRunnerInput input)
         {
@@ -41,6 +48,26 @@ namespace DenemeTest.Exams
                 };
             }
 
+            if (input.Code.Length > MaxCodeCharacters)
+            {
+                return new CodeRunnerResult
+                {
+                    ExitCode = 1,
+                    Output = string.Empty,
+                    Error = $"Kod çok uzun. Maksimum izin verilen karakter sayısı: {MaxCodeCharacters}."
+                };
+            }
+
+            if (!string.IsNullOrEmpty(input.InputText) && input.InputText.Length > MaxInputCharacters)
+            {
+                return new CodeRunnerResult
+                {
+                    ExitCode = 1,
+                    Output = string.Empty,
+                    Error = $"Input çok uzun. Maksimum izin verilen karakter sayısı: {MaxInputCharacters}."
+                };
+            }
+
             var normalizedCode = NormalizeCode(input.Code);
 
             var blockedReason = ValidateCodeSafety(normalizedCode);
@@ -54,9 +81,7 @@ namespace DenemeTest.Exams
                 };
             }
 
-            var timeoutMilliseconds = input.TimeoutMilliseconds <= 0
-                ? 3000
-                : input.TimeoutMilliseconds;
+            var timeoutMilliseconds = NormalizeTimeout(input.TimeoutMilliseconds);
 
             var compileResult = CompileToAssembly(normalizedCode);
 
@@ -81,11 +106,15 @@ namespace DenemeTest.Exams
 
             AssemblyLoadContext? loadContext = null;
 
+            LimitedStringWriter? outputWriter = null;
+            LimitedStringWriter? errorWriter = null;
+            StringReader? inputReader = null;
+
             try
             {
-                using var outputWriter = new StringWriter(outputBuilder);
-                using var errorWriter = new StringWriter(errorBuilder);
-                using var inputReader = new StringReader(input.InputText ?? string.Empty);
+                outputWriter = new LimitedStringWriter(outputBuilder, MaxOutputCharacters);
+                errorWriter = new LimitedStringWriter(errorBuilder, MaxOutputCharacters);
+                inputReader = new StringReader(input.InputText ?? string.Empty);
 
                 Console.SetOut(outputWriter);
                 Console.SetError(errorWriter);
@@ -107,7 +136,7 @@ namespace DenemeTest.Exams
                     return new CodeRunnerResult
                     {
                         ExitCode = 1,
-                        Output = outputBuilder.ToString(),
+                        Output = BuildFinalOutput(outputBuilder, outputWriter),
                         Error = "Program içinde çalıştırılabilir bir Main metodu bulunamadı."
                     };
                 }
@@ -181,15 +210,17 @@ namespace DenemeTest.Exams
                     return new CodeRunnerResult
                     {
                         ExitCode = 124,
-                        Output = outputBuilder.ToString(),
+                        Output = BuildFinalOutput(outputBuilder, outputWriter),
                         Error = $"Kod çalışma süresi sınırını aştı. Maksimum süre: {timeoutMilliseconds} ms."
                     };
                 }
 
+                timeoutCts.Cancel();
+
                 var executionResult = await executionTask;
 
-                var output = outputBuilder.ToString();
-                var stdError = errorBuilder.ToString();
+                var output = BuildFinalOutput(outputBuilder, outputWriter);
+                var stdError = BuildFinalOutput(errorBuilder, errorWriter);
 
                 var finalError = CombineErrors(executionResult.Error, stdError);
 
@@ -205,7 +236,7 @@ namespace DenemeTest.Exams
                 return new CodeRunnerResult
                 {
                     ExitCode = 1,
-                    Output = outputBuilder.ToString(),
+                    Output = BuildFinalOutput(outputBuilder, outputWriter),
                     Error = $"Beklenmeyen hata: {ex.GetType().Name} - {ex.Message}"
                 };
             }
@@ -214,6 +245,16 @@ namespace DenemeTest.Exams
                 Console.SetOut(originalOut);
                 Console.SetError(originalError);
                 Console.SetIn(originalIn);
+
+                try
+                {
+                    outputWriter?.Dispose();
+                    errorWriter?.Dispose();
+                    inputReader?.Dispose();
+                }
+                catch
+                {
+                }
 
                 try
                 {
@@ -244,7 +285,8 @@ namespace DenemeTest.Exams
                 options: new CSharpCompilationOptions(
                     OutputKind.ConsoleApplication,
                     optimizationLevel: OptimizationLevel.Release,
-                    allowUnsafe: false
+                    allowUnsafe: false,
+                    checkOverflow: false
                 )
             );
 
@@ -278,18 +320,23 @@ namespace DenemeTest.Exams
 
             if (!string.IsNullOrWhiteSpace(trustedAssemblies))
             {
+                var allowedAssemblyNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    "System.Private.CoreLib.dll",
+                    "System.Runtime.dll",
+                    "System.Console.dll",
+                    "System.Linq.dll",
+                    "System.Collections.dll",
+                    "System.Collections.NonGeneric.dll",
+                    "System.Text.RegularExpressions.dll",
+                    "System.Text.Encoding.Extensions.dll",
+                    "netstandard.dll",
+                    "mscorlib.dll"
+                };
+
                 return trustedAssemblies
                     .Split(Path.PathSeparator)
-                    .Where(path =>
-                        path.EndsWith("System.Private.CoreLib.dll", StringComparison.OrdinalIgnoreCase) ||
-                        path.EndsWith("System.Runtime.dll", StringComparison.OrdinalIgnoreCase) ||
-                        path.EndsWith("System.Console.dll", StringComparison.OrdinalIgnoreCase) ||
-                        path.EndsWith("System.Linq.dll", StringComparison.OrdinalIgnoreCase) ||
-                        path.EndsWith("System.Collections.dll", StringComparison.OrdinalIgnoreCase) ||
-                        path.EndsWith("System.Private.Uri.dll", StringComparison.OrdinalIgnoreCase) ||
-                        path.EndsWith("netstandard.dll", StringComparison.OrdinalIgnoreCase) ||
-                        path.EndsWith("mscorlib.dll", StringComparison.OrdinalIgnoreCase)
-                    )
+                    .Where(path => allowedAssemblyNames.Contains(Path.GetFileName(path)))
                     .Select(path => MetadataReference.CreateFromFile(path))
                     .Cast<MetadataReference>()
                     .ToList();
@@ -300,8 +347,23 @@ namespace DenemeTest.Exams
                 MetadataReference.CreateFromFile(typeof(object).Assembly.Location),
                 MetadataReference.CreateFromFile(typeof(Console).Assembly.Location),
                 MetadataReference.CreateFromFile(typeof(Enumerable).Assembly.Location),
-                MetadataReference.CreateFromFile(typeof(List<>).Assembly.Location)
+                MetadataReference.CreateFromFile(typeof(List<>).Assembly.Location),
+                MetadataReference.CreateFromFile(typeof(Regex).Assembly.Location)
             };
+        }
+
+        private static int NormalizeTimeout(int requestedTimeoutMilliseconds)
+        {
+            if (requestedTimeoutMilliseconds <= 0)
+            {
+                return DefaultTimeoutMilliseconds;
+            }
+
+            return Math.Clamp(
+                requestedTimeoutMilliseconds,
+                500,
+                MaxTimeoutMilliseconds
+            );
         }
 
         private static string NormalizeLanguage(string? language)
@@ -335,6 +397,7 @@ namespace DenemeTest.Exams
 using System;
 using System.Linq;
 using System.Collections.Generic;
+using System.Text.RegularExpressions;
 
 public class Program
 {{
@@ -369,41 +432,108 @@ public class Program
 
         private static string? ValidateCodeSafety(string code)
         {
-            var forbiddenPatterns = new[]
+            var compactCode = Regex.Replace(code, @"\s+", string.Empty).ToLowerInvariant();
+            var normalizedCode = code.ToLowerInvariant();
+
+            var forbiddenContains = new[]
             {
-                "System.IO",
-                "File.",
-                "Directory.",
-                "Path.",
-                "Process",
-                "System.Diagnostics",
-                "Reflection",
-                "Assembly.",
-                "Activator.",
-                "Environment.",
-                "Thread.",
-                "Task.Delay",
-                "Task.Run",
-                "while(true)",
-                "while (true)",
-                "for(;;)",
-                "for (;;)",
+                "system.io",
+                "file.",
+                "directory.",
+                "path.",
+                "driveinfo",
+                "filestream",
+                "streamreader",
+                "streamwriter",
+
+                "system.net",
+                "httpclient",
+                "webclient",
+                "socket",
+                "tcpclient",
+                "udpclient",
+                "dns.",
+
+                "system.diagnostics",
+                "process",
+                "processstartinfo",
+
+                "reflection",
+                "assembly.",
+                "methodinfo",
+                "propertyinfo",
+                "fieldinfo",
+                "activator.",
+                "gettype(",
+
+                "environment.",
+                "appcontext.",
+                "appdomain",
+                "assemblyloadcontext",
+
+                "thread.",
+                "threadsleep",
+                "system.threading",
+                "task.delay",
+                "task.run",
+                "parallel.",
+                "timer",
+
                 "unsafe",
-                "DllImport",
-                "Marshal.",
-                "GC.",
-                "Console.SetOut",
-                "Console.SetIn",
-                "Console.SetError",
-                "AppDomain",
-                "AssemblyLoadContext"
+                "dllimport",
+                "marshal.",
+                "intptr",
+                "uintptr",
+                "stackalloc",
+                "fixed(",
+
+                "console.setout",
+                "console.setin",
+                "console.seterror",
+                "console.openstandardinput",
+                "console.openstandardoutput",
+                "console.openstandarderror",
+                "console.readkey",
+
+                "gc.",
+                "goto ",
+                "dynamic ",
+                "#r ",
+                "#load "
             };
 
-            foreach (var pattern in forbiddenPatterns)
+            foreach (var pattern in forbiddenContains)
             {
-                if (code.Contains(pattern, StringComparison.OrdinalIgnoreCase))
+                if (normalizedCode.Contains(pattern, StringComparison.OrdinalIgnoreCase) ||
+                    compactCode.Contains(pattern.Replace(" ", string.Empty), StringComparison.OrdinalIgnoreCase))
                 {
                     return $"Güvenlik nedeniyle bu kod parçası çalıştırılamaz. Engellenen kullanım: {pattern}";
+                }
+            }
+
+            var forbiddenRegexPatterns = new Dictionary<string, string>
+            {
+                { @"while\s*\(\s*true\s*\)", "while(true)" },
+                { @"for\s*\(\s*;\s*;\s*\)", "for(;;)" },
+                { @"do\s*\{", "do-while döngüsü" },
+                { @"new\s+thread\s*\(", "new Thread(...)" },
+                { @"thread\s*\.\s*sleep\s*\(", "Thread.Sleep(...)" },
+                { @"task\s*\.\s*delay\s*\(", "Task.Delay(...)" },
+                { @"task\s*\.\s*run\s*\(", "Task.Run(...)" },
+                { @"process\s*\.\s*start\s*\(", "Process.Start(...)" },
+                { @"activator\s*\.\s*createinstance\s*\(", "Activator.CreateInstance(...)" },
+                { @"assembly\s*\.\s*load", "Assembly.Load(...)" },
+                { @"type\s*\.\s*gettype\s*\(", "Type.GetType(...)" },
+                { @"console\s*\.\s*setout\s*\(", "Console.SetOut(...)" },
+                { @"console\s*\.\s*setin\s*\(", "Console.SetIn(...)" },
+                { @"console\s*\.\s*seterror\s*\(", "Console.SetError(...)" }
+            };
+
+            foreach (var item in forbiddenRegexPatterns)
+            {
+                if (Regex.IsMatch(code, item.Key, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+                {
+                    return $"Güvenlik nedeniyle bu kod parçası çalıştırılamaz. Engellenen kullanım: {item.Value}";
                 }
             }
 
@@ -415,7 +545,7 @@ public class Program
             var errorBuilder = new StringBuilder();
             errorBuilder.AppendLine("Derleme hataları:");
 
-            foreach (var diagnostic in diagnostics)
+            foreach (var diagnostic in diagnostics.Take(20))
             {
                 var span = diagnostic.Location.GetLineSpan();
                 var line = span.StartLinePosition.Line + 1;
@@ -455,6 +585,21 @@ public class Program
             return runtimeError + Environment.NewLine + stdError;
         }
 
+        private static string BuildFinalOutput(
+            StringBuilder builder,
+            LimitedStringWriter? writer)
+        {
+            var output = builder.ToString();
+
+            if (writer?.Truncated == true)
+            {
+                output += Environment.NewLine +
+                          "[Çıktı çok uzun olduğu için sistem tarafından kesildi.]";
+            }
+
+            return output;
+        }
+
         private sealed class CompilationResult
         {
             public bool Success { get; set; }
@@ -469,6 +614,91 @@ public class Program
             public int ExitCode { get; set; }
 
             public string? Error { get; set; }
+        }
+
+        private sealed class LimitedStringWriter : StringWriter
+        {
+            private readonly int _maxCharacters;
+            private int _writtenCharacters;
+
+            public bool Truncated { get; private set; }
+
+            public LimitedStringWriter(StringBuilder builder, int maxCharacters)
+                : base(builder)
+            {
+                _maxCharacters = Math.Max(1, maxCharacters);
+            }
+
+            public override void Write(char value)
+            {
+                if (_writtenCharacters >= _maxCharacters)
+                {
+                    Truncated = true;
+                    return;
+                }
+
+                base.Write(value);
+                _writtenCharacters++;
+            }
+
+            public override void Write(string? value)
+            {
+                if (string.IsNullOrEmpty(value))
+                {
+                    return;
+                }
+
+                var remaining = _maxCharacters - _writtenCharacters;
+
+                if (remaining <= 0)
+                {
+                    Truncated = true;
+                    return;
+                }
+
+                if (value.Length > remaining)
+                {
+                    base.Write(value.Substring(0, remaining));
+                    _writtenCharacters += remaining;
+                    Truncated = true;
+                    return;
+                }
+
+                base.Write(value);
+                _writtenCharacters += value.Length;
+            }
+
+            public override void Write(char[] buffer, int index, int count)
+            {
+                if (buffer == null || count <= 0)
+                {
+                    return;
+                }
+
+                var remaining = _maxCharacters - _writtenCharacters;
+
+                if (remaining <= 0)
+                {
+                    Truncated = true;
+                    return;
+                }
+
+                var safeCount = Math.Min(count, remaining);
+
+                base.Write(buffer, index, safeCount);
+                _writtenCharacters += safeCount;
+
+                if (safeCount < count)
+                {
+                    Truncated = true;
+                }
+            }
+
+            public override void WriteLine(string? value)
+            {
+                Write(value);
+                Write(Environment.NewLine);
+            }
         }
     }
 }
