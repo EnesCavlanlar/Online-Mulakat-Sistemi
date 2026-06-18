@@ -20,27 +20,50 @@
 }
 else
 {
+    <div class="alert alert-primary">
+        <h5 class="mb-2">Sınav Öncesi Bilgilendirme</h5>
+
+        <p class="mb-2">
+            Bu sınav sırasında adayın <strong>kamera görüntüsü</strong>, <strong>mikrofon erişimi</strong> ve
+            <strong>tüm ekran paylaşımı</strong> güvenlik ve değerlendirme amacıyla kullanılacaktır.
+        </p>
+
+        <p class="mb-0">
+            Sınav başladıktan sonra sekme değiştirme, pencere değiştirme, ekran paylaşımını kapatma,
+            sayfayı yenileme veya tarayıcı geliştirici araçlarını açma gibi davranışlar proctoring ihlali olarak kaydedilebilir.
+        </p>
+    </div>
+
     <ol class="mb-3">
         <li>Kamera ve mikrofona izin ver.</li>
         <li><strong>Tüm ekran</strong> paylaşım izni ver.</li>
-        <li>Her iki izin aktif olunca <b>Sınava Başla</b> butonu açılır.</li>
+        <li>Kayıt ve güvenlik şartlarını kabul et.</li>
+        <li>Her şey hazır olunca <b>Sınava Başla</b> butonu aktif olur.</li>
     </ol>
 
-    <div class="alert alert-info">
-        Sınav başladıktan sonra sekme değiştirme, pencere değiştirme, ekran paylaşımını kapatma veya sayfayı yenileme sınavı iptal eder.
+    <div class="alert alert-warning">
+        <strong>Önemli:</strong> Ekran paylaşımında pencere veya sekme değil, mutlaka <strong>Tüm ekran</strong> seçilmelidir.
+        Aksi halde sınava girişe izin verilmez.
     </div>
 
     <div class="row g-3">
         <div class="col-md-6">
             <div class="card h-100">
-                <div class="card-header">Kamera Önizleme</div>
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <span>Kamera Önizleme</span>
+
+                    <span class="badge @(_camOk ? "bg-success" : "bg-secondary")">
+                        @(_camOk ? "Hazır" : "Bekleniyor")
+                    </span>
+                </div>
+
                 <div class="card-body">
                     <video id="camPreview"
                            class="border rounded w-100"
                            autoplay
                            playsinline
                            muted
-                           style="height:240px">
+                           style="height:240px;background:#000">
                     </video>
 
                     <div class="d-flex align-items-center gap-2 mt-2">
@@ -50,13 +73,22 @@ else
                             @GetCamButtonText()
                         </button>
 
-                        <span class="badge @(_camOk ? "bg-success" : "bg-secondary")">
-                            @(_camOk ? "Hazır" : "Bekleniyor")
-                        </span>
+                        @if (_camOk)
+                        {
+                            <span class="text-success small">
+                                Kamera ve mikrofon izni alındı.
+                            </span>
+                        }
+                        else
+                        {
+                            <span class="text-muted small">
+                                İzin bekleniyor.
+                            </span>
+                        }
                     </div>
 
                     <small class="text-muted d-block mt-2">
-                        Kamera ve mikrofon izni tarayıcı tarafından istenir.
+                        Kamera ve mikrofon izni tarayıcı tarafından istenir. Kamera kaydı sınav bitince admin raporuna yüklenir.
                     </small>
                 </div>
             </div>
@@ -64,14 +96,21 @@ else
 
         <div class="col-md-6">
             <div class="card h-100">
-                <div class="card-header">Ekran Paylaşımı Önizleme</div>
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <span>Ekran Paylaşımı Önizleme</span>
+
+                    <span class="badge @(_screenOk ? "bg-success" : "bg-secondary")">
+                        @(_screenOk ? "Hazır" : "Bekleniyor")
+                    </span>
+                </div>
+
                 <div class="card-body">
                     <video id="screenPreview"
                            class="border rounded w-100"
                            autoplay
                            playsinline
                            muted
-                           style="height:240px">
+                           style="height:240px;background:#000">
                     </video>
 
                     <div class="d-flex align-items-center gap-2 mt-2">
@@ -81,9 +120,18 @@ else
                             @GetScreenButtonText()
                         </button>
 
-                        <span class="badge @(_screenOk ? "bg-success" : "bg-secondary")">
-                            @(_screenOk ? "Hazır" : "Bekleniyor")
-                        </span>
+                        @if (_screenOk)
+                        {
+                            <span class="text-success small">
+                                Tüm ekran paylaşımı doğrulandı.
+                            </span>
+                        }
+                        else
+                        {
+                            <span class="text-muted small">
+                                Ekran paylaşımı bekleniyor.
+                            </span>
+                        }
                     </div>
 
                     <small class="text-muted d-block mt-2">
@@ -94,20 +142,54 @@ else
         </div>
     </div>
 
-    <div class="mt-3">
+    <div class="card mt-3">
+        <div class="card-body">
+            <h5 class="mb-2">Kayıt ve Güvenlik Onayı</h5>
+
+            <p class="text-muted mb-3">
+                Sınav sırasında alınan kamera ve ekran kayıtları yalnızca değerlendirme, sınav güvenliği
+                ve ihlal incelemesi amacıyla kullanılır. Kayıtlar sistemde belirlenen saklama süresi sonunda silinebilir.
+            </p>
+
+            <div class="form-check">
+                <input class="form-check-input"
+                       type="checkbox"
+                       id="recordingConsent"
+                       @bind="_consentAccepted"
+                       disabled="@_starting" />
+
+                <label class="form-check-label" for="recordingConsent">
+                    Kamera, mikrofon ve tüm ekran kaydı alınacağını okudum; sınav güvenlik kurallarını kabul ediyorum.
+                </label>
+            </div>
+
+            @if (!_consentAccepted)
+            {
+                <div class="text-muted small mt-2">
+                    Sınava başlamak için bu onayı işaretlemen gerekiyor.
+                </div>
+            }
+        </div>
+    </div>
+
+    <div class="mt-3 d-flex align-items-center gap-2 flex-wrap">
         <button class="btn btn-primary"
                 @onclick="StartExam"
-                disabled="@(!(_camOk && _screenOk) || _starting)">
+                disabled="@(!CanStartExam())">
             @(_starting ? "Başlatılıyor..." : "Sınava Başla")
         </button>
 
-        @if (_starting)
-        {
-            <div class="alert alert-info mt-3">
-                Sınav oturumu hazırlanıyor. Kamera ve ekran kaydı başlatılıyor, lütfen bekle...
-            </div>
-        }
+        <span class="@GetReadyBadgeCss()">
+            @GetReadyText()
+        </span>
     </div>
+
+    @if (_starting)
+    {
+        <div class="alert alert-info mt-3">
+            Sınav oturumu hazırlanıyor. Kamera ve ekran kaydı başlatılıyor, lütfen bekle...
+        </div>
+    }
 }
 
 @code
@@ -121,6 +203,7 @@ else
     private bool _starting;
     private bool _requestingCam;
     private bool _requestingScreen;
+    private bool _consentAccepted;
 
     private bool _handoffToRunner;
 
@@ -218,8 +301,13 @@ else
 
     private async Task StartExam()
     {
-        if (!(_camOk && _screenOk) || _starting)
+        if (!CanStartExam())
         {
+            if (!_consentAccepted)
+            {
+                _error = "Sınava başlamak için kayıt ve güvenlik onayını kabul etmelisin.";
+            }
+
             return;
         }
 
@@ -304,6 +392,16 @@ else
             _error = GetFriendlyServerError(ex);
             StateHasChanged();
         }
+    }
+
+    private bool CanStartExam()
+    {
+        return _camOk &&
+               _screenOk &&
+               _consentAccepted &&
+               !_starting &&
+               !_requestingCam &&
+               !_requestingScreen;
     }
 
     private async Task CancelStartedSessionSafelyAsync(Guid sessionId, string reason)
@@ -584,6 +682,46 @@ else
         }
 
         return _screenOk ? "Ekran Paylaşımı Açık" : "Tüm Ekrana Erişim İzni Ver";
+    }
+
+    private string GetReadyText()
+    {
+        if (_starting)
+        {
+            return "Sınav başlatılıyor";
+        }
+
+        if (!_camOk)
+        {
+            return "Kamera/mikrofon izni bekleniyor";
+        }
+
+        if (!_screenOk)
+        {
+            return "Tüm ekran paylaşımı bekleniyor";
+        }
+
+        if (!_consentAccepted)
+        {
+            return "Kayıt ve güvenlik onayı bekleniyor";
+        }
+
+        return "Sınava hazır";
+    }
+
+    private string GetReadyBadgeCss()
+    {
+        if (CanStartExam())
+        {
+            return "badge bg-success";
+        }
+
+        if (_starting)
+        {
+            return "badge bg-info text-dark";
+        }
+
+        return "badge bg-secondary";
     }
 
     private static string GetFriendlyJsError(Exception ex, string fallback)

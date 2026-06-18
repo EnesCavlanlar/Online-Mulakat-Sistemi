@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using DenemeTest.Exams;
@@ -396,6 +397,14 @@ namespace DenemeTest.Application.Exams
 
             var session = await _sessionRepo.GetAsync(sessionId);
 
+            var recordings = await _recordingRepo.GetListAsync(recording =>
+                recording.ExamSessionId == sessionId);
+
+            foreach (var recording in recordings)
+            {
+                TryDeletePhysicalRecordingFile(recording.StoragePath);
+            }
+
             var answers = await _answerRepo.GetListAsync(answer =>
                 answer.ExamSessionId == sessionId);
 
@@ -428,15 +437,47 @@ namespace DenemeTest.Application.Exams
                 await _codeReviewRepo.DeleteAsync(codeReview, autoSave: false);
             }
 
-            var recordings = await _recordingRepo.GetListAsync(recording =>
-                recording.ExamSessionId == sessionId);
-
             foreach (var recording in recordings)
             {
                 await _recordingRepo.DeleteAsync(recording, autoSave: false);
             }
 
             await _sessionRepo.DeleteAsync(session, autoSave: true);
+        }
+
+        private static void TryDeletePhysicalRecordingFile(string? storagePath)
+        {
+            if (string.IsNullOrWhiteSpace(storagePath))
+            {
+                return;
+            }
+
+            try
+            {
+                var fullPath = storagePath.Trim();
+
+                if (!Path.IsPathRooted(fullPath))
+                {
+                    return;
+                }
+
+                var extension = Path.GetExtension(fullPath);
+
+                if (!extension.Equals(".webm", StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+
+                if (File.Exists(fullPath))
+                {
+                    File.Delete(fullPath);
+                }
+            }
+            catch
+            {
+                // Fiziksel dosya silinemese bile session metadata temizliği devam etsin.
+                // Production'da buraya logging eklenebilir.
+            }
         }
     }
 }

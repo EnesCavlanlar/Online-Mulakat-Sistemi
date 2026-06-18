@@ -1,7 +1,10 @@
 ﻿@page "/admin/session/{SessionId:guid}"
 @using DenemeTest.Application.Exams
+@using DenemeTest.Exams.Dtos
+@using System.Text.Json.Serialization
 @inject IReportsAppService ReportsApp
 @inject NavigationManager Nav
+@inject IJSRuntime JS
 
 <h3>Oturum Detayı</h3>
 
@@ -10,91 +13,155 @@
     <div class="alert alert-danger">@_errorMessage</div>
 }
 
+@if (!string.IsNullOrWhiteSpace(_warningMessage))
+{
+    <div class="alert alert-warning">@_warningMessage</div>
+}
+
 @if (_detail is null)
 {
     <p>Yükleniyor...</p>
 }
 else
 {
+    var statusText = _detail.IsCancelled
+        ? "İptal"
+        : (_detail.EndTime.HasValue ? "Tamamlandı" : "Devam Ediyor");
+
+    var statusCss = _detail.IsCancelled
+        ? "badge bg-danger"
+        : (_detail.EndTime.HasValue ? "badge bg-success" : "badge bg-secondary");
+
+    var scoreCss = _detail.Score.HasValue
+        ? (_detail.Score.Value >= 70 ? "badge bg-success" : _detail.Score.Value >= 40 ? "badge bg-warning text-dark" : "badge bg-danger")
+        : "badge bg-secondary";
+
+    var cacheKey = DateTimeOffset.Now.ToUnixTimeSeconds();
+
+    var candidateVideoUrl = AppendCache(
+        string.IsNullOrWhiteSpace(_detail.CandidateRecordingUrl)
+            ? $"/api/recordings/download?sessionId={SessionId}&kind=cam"
+            : _detail.CandidateRecordingUrl,
+        cacheKey
+    );
+
+    var screenVideoUrl = AppendCache(
+        string.IsNullOrWhiteSpace(_detail.ScreenRecordingUrl)
+            ? $"/api/recordings/download?sessionId={SessionId}&kind=screen"
+            : _detail.ScreenRecordingUrl,
+        cacheKey
+    );
+
+    var hasCandidateRecording = HasCandidateRecording();
+    var hasScreenRecording = HasScreenRecording();
+
     <div class="card mb-3">
         <div class="card-body">
-            <h5>@_detail.CandidateFirstName @_detail.CandidateLastName</h5>
-
-            <p><b>E-posta:</b> @_detail.CandidateEmail</p>
-
-            @{
-                var statusText = _detail.IsCancelled
-                ? "İptal"
-                : (_detail.EndTime.HasValue ? "Tamamlandı" : "Devam Ediyor");
-
-                var statusCss = _detail.IsCancelled
-                ? "badge bg-danger"
-                : (_detail.EndTime.HasValue ? "badge bg-success" : "badge bg-secondary");
-
-                var scoreCss = _detail.Score.HasValue
-                ? (_detail.Score.Value >= 70 ? "badge bg-success" : _detail.Score.Value >= 40 ? "badge bg-warning text-dark" : "badge bg-danger")
-                : "badge bg-secondary";
-
-                var cacheKey = DateTimeOffset.Now.ToUnixTimeSeconds();
-
-                var candidateVideoUrl = AppendCache(
-                string.IsNullOrWhiteSpace(_detail.CandidateRecordingUrl)
-                ? $"/api/recordings/download?sessionId={SessionId}&kind=cam"
-                : _detail.CandidateRecordingUrl,
-                cacheKey
-                );
-
-                var screenVideoUrl = AppendCache(
-                string.IsNullOrWhiteSpace(_detail.ScreenRecordingUrl)
-                ? $"/api/recordings/download?sessionId={SessionId}&kind=screen"
-                : _detail.ScreenRecordingUrl,
-                cacheKey
-                );
-            }
-
-            <div class="row">
-                <div class="col-md-6">
-                    <p><b>Durum:</b> <span class="@statusCss">@statusText</span></p>
-                    <p><b>Başlangıç:</b> @(_detail.StartTime?.ToString("yyyy-MM-dd HH:mm") ?? "-")</p>
-                    <p><b>Bitiş:</b> @(_detail.EndTime?.ToString("yyyy-MM-dd HH:mm") ?? "-")</p>
+            <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+                <div>
+                    <h5 class="mb-1">@_detail.CandidateFirstName @_detail.CandidateLastName</h5>
+                    <div class="text-muted">@_detail.CandidateEmail</div>
                 </div>
 
-                <div class="col-md-6">
-                    <p>
-                        <b>Puan:</b>
-                        <span class="@scoreCss">
-                            @(_detail.Score.HasValue ? $"{_detail.Score}/100" : "Hesaplanmadı")
-                        </span>
-                    </p>
+                <div class="d-flex gap-2 flex-wrap">
+                    <span class="@statusCss">@statusText</span>
 
-                    <p><b>İhlal sayısı:</b> @_detail.Violations</p>
+                    <span class="@scoreCss">
+                        @(_detail.Score.HasValue ? $"{_detail.Score}/100" : "Puan yok")
+                    </span>
 
-                    @if (!string.IsNullOrWhiteSpace(_detail.ScoreExplanation))
+                    @if (_detail.Violations > 0)
                     {
-                        <p><b>Puan açıklaması:</b> @_detail.ScoreExplanation</p>
+                        <span class="badge bg-warning text-dark">
+                            @_detail.Violations ihlal
+                        </span>
+                    }
+                    else
+                    {
+                        <span class="badge bg-secondary">
+                            0 ihlal
+                        </span>
+                    }
+
+                    @if (hasCandidateRecording && hasScreenRecording)
+                    {
+                        <span class="badge bg-success">Kayıtlar tam</span>
+                    }
+                    else if (hasCandidateRecording || hasScreenRecording)
+                    {
+                        <span class="badge bg-warning text-dark">Kısmi kayıt</span>
+                    }
+                    else
+                    {
+                        <span class="badge bg-secondary">Kayıt yok</span>
                     }
                 </div>
             </div>
 
-            @if (_detail.IsCancelled && !string.IsNullOrWhiteSpace(_detail.CancelReason))
-            {
-                <div class="alert alert-danger mt-2">
-                    <b>İptal sebebi:</b> @_detail.CancelReason
+            <hr />
+
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <div class="border rounded p-3 h-100">
+                        <div class="text-muted small">Başlangıç</div>
+                        <div>@FormatDateTime(_detail.StartTime)</div>
+
+                        <div class="text-muted small mt-3">Bitiş</div>
+                        <div>@FormatDateTime(_detail.EndTime)</div>
+                    </div>
                 </div>
-            }
+
+                <div class="col-md-6">
+                    <div class="border rounded p-3 h-100">
+                        <div class="text-muted small">Puan Açıklaması</div>
+
+                        @if (!string.IsNullOrWhiteSpace(_detail.ScoreExplanation))
+                        {
+                            <div>@_detail.ScoreExplanation</div>
+                        }
+                        else
+                        {
+                            <div class="text-muted">-</div>
+                        }
+
+                        @if (_detail.IsCancelled && !string.IsNullOrWhiteSpace(_detail.CancelReason))
+                        {
+                            <div class="alert alert-danger mt-3 mb-0">
+                                <b>İptal sebebi:</b> @_detail.CancelReason
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
 
             <h5 class="mt-4">Sınav Kayıtları</h5>
 
             <div class="alert alert-info small">
-                Burada adayın kamera görüntüsü ve adayın sınav sırasında paylaştığı cihaz ekran kaydı gösterilir.
-                Video görünmüyorsa kayıt henüz yüklenmemiş, dosya boş oluşmuş veya tarayıcı önbelleği eski kayıt yolunu tutuyor olabilir.
+                Kamera ve ekran kayıtları PostgreSQL içinde değil, dosya sisteminde tutulur. PostgreSQL sadece metadata tutar.
+                Bu sayfa hem DB metadata bilgisini hem de disk üzerindeki gerçek dosya varlığını kontrol eder.
             </div>
+
+            @if (_recordingStatusLoading)
+            {
+                <div class="alert alert-secondary small">
+                    Kayıt dosyaları kontrol ediliyor...
+                </div>
+            }
 
             <div class="row g-3">
                 <div class="col-md-6">
                     <div class="card h-100 shadow-sm">
-                        <div class="card-header">
+                        <div class="card-header d-flex justify-content-between align-items-center">
                             <strong>Aday görüntüsü</strong>
+
+                            @if (hasCandidateRecording)
+                            {
+                                <span class="badge bg-success">Kayıt var</span>
+                            }
+                            else
+                            {
+                                <span class="badge bg-secondary">Kayıt yok</span>
+                            }
                         </div>
 
                         <div class="card-body">
@@ -102,34 +169,72 @@ else
                                 Adayın kamera kaydı.
                             </p>
 
-                            <video controls
-                                   preload="metadata"
-                                   style="width:100%;height:240px;border-radius:8px;background:#000"
-                                   src="@candidateVideoUrl">
-                                Tarayıcınız video oynatmayı desteklemiyor.
-                            </video>
+                            @if (hasCandidateRecording)
+                            {
+                                <video controls
+                                       preload="metadata"
+                                       style="width:100%;height:260px;border-radius:8px;background:#000"
+                                       src="@candidateVideoUrl">
+                                    Tarayıcınız video oynatmayı desteklemiyor.
+                                </video>
 
-                            <div class="mt-3 d-flex gap-2 flex-wrap">
-                                <a class="btn btn-sm btn-outline-primary"
-                                   href="@candidateVideoUrl"
-                                   target="_blank">
-                                    Aday görüntüsünü aç
-                                </a>
+                                <div class="mt-3">
+                                    @RenderRecordingMetadata(
+                                    GetCandidateFileName(),
+                                                        GetCandidateSizeBytes(),
+                                                        GetCandidateUploadedAt(),
+                                                        GetCandidateExpiresAt()
+                                                        )
+                        </div>
 
-                                <a class="btn btn-sm btn-outline-secondary"
-                                   href="@candidateVideoUrl"
-                                   download>
-                                    Aday görüntüsünü indir
-                                </a>
-                            </div>
+                        <div class="mt-3 d-flex gap-2 flex-wrap">
+                            <a class="btn btn-sm btn-outline-primary"
+                               href="@candidateVideoUrl"
+                               target="_blank">
+                                Aday görüntüsünü aç
+                            </a>
+
+                            <a class="btn btn-sm btn-outline-secondary"
+                               href="@candidateVideoUrl"
+                               download>
+                                Aday görüntüsünü indir
+                            </a>
+                        </div>
+                                                }
+                            else if (_detail.CandidateRecordingStorageDeleted)
+                            {
+                                <div class="alert alert-warning mb-0">
+                                    Aday kamera kaydı daha önce silinmiş.
+                                    @if (_detail.CandidateRecordingStorageDeletedAt.HasValue)
+                                    {
+                                        <br />
+                                        <span>Silinme zamanı: @FormatDateTime(_detail.CandidateRecordingStorageDeletedAt)</span>
+                                    }
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="alert alert-secondary mb-0">
+                                    Bu oturum için aday kamera kaydı bulunamadı.
+                                </div>
+                            }
                         </div>
                     </div>
                 </div>
 
                 <div class="col-md-6">
                     <div class="card h-100 shadow-sm">
-                        <div class="card-header">
+                        <div class="card-header d-flex justify-content-between align-items-center">
                             <strong>Cihaz ekran kaydı</strong>
+
+                            @if (hasScreenRecording)
+                            {
+                                <span class="badge bg-success">Kayıt var</span>
+                            }
+                            else
+                            {
+                                <span class="badge bg-secondary">Kayıt yok</span>
+                            }
                         </div>
 
                         <div class="card-body">
@@ -137,26 +242,55 @@ else
                                 Adayın sınav sırasında paylaştığı ekran kaydı.
                             </p>
 
-                            <video controls
-                                   preload="metadata"
-                                   style="width:100%;height:240px;border-radius:8px;background:#000"
-                                   src="@screenVideoUrl">
-                                Tarayıcınız video oynatmayı desteklemiyor.
-                            </video>
+                            @if (hasScreenRecording)
+                            {
+                                <video controls
+                                       preload="metadata"
+                                       style="width:100%;height:260px;border-radius:8px;background:#000"
+                                       src="@screenVideoUrl">
+                                    Tarayıcınız video oynatmayı desteklemiyor.
+                                </video>
 
-                            <div class="mt-3 d-flex gap-2 flex-wrap">
-                                <a class="btn btn-sm btn-outline-primary"
-                                   href="@screenVideoUrl"
-                                   target="_blank">
-                                    Cihaz ekran kaydını aç
-                                </a>
+                                <div class="mt-3">
+                                    @RenderRecordingMetadata(
+                                    GetScreenFileName(),
+                                                        GetScreenSizeBytes(),
+                                                        GetScreenUploadedAt(),
+                                                        GetScreenExpiresAt()
+                                                        )
+                        </div>
 
-                                <a class="btn btn-sm btn-outline-secondary"
-                                   href="@screenVideoUrl"
-                                   download>
-                                    Cihaz ekran kaydını indir
-                                </a>
-                            </div>
+                        <div class="mt-3 d-flex gap-2 flex-wrap">
+                            <a class="btn btn-sm btn-outline-primary"
+                               href="@screenVideoUrl"
+                               target="_blank">
+                                Cihaz ekran kaydını aç
+                            </a>
+
+                            <a class="btn btn-sm btn-outline-secondary"
+                               href="@screenVideoUrl"
+                               download>
+                                Cihaz ekran kaydını indir
+                            </a>
+                        </div>
+                                                }
+                            else if (_detail.ScreenRecordingStorageDeleted)
+                            {
+                                <div class="alert alert-warning mb-0">
+                                    Cihaz ekran kaydı daha önce silinmiş.
+                                    @if (_detail.ScreenRecordingStorageDeletedAt.HasValue)
+                                    {
+                                        <br />
+                                        <span>Silinme zamanı: @FormatDateTime(_detail.ScreenRecordingStorageDeletedAt)</span>
+                                    }
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="alert alert-secondary mb-0">
+                                    Bu oturum için cihaz ekran kaydı bulunamadı.
+                                </div>
+                            }
                         </div>
                     </div>
                 </div>
@@ -185,7 +319,7 @@ else
                             @foreach (var item in _detail.ProctoringEvents)
                             {
                                 <tr>
-                                    <td>@item.CreationTime.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                                    <td>@FormatDateTime(item.CreationTime)</td>
                                     <td>
                                         <span class="badge bg-danger">@item.Type</span>
                                     </td>
@@ -315,7 +449,7 @@ else
                     }
 
                     <p class="text-muted small mb-0">
-                        Analiz zamanı: @review.CreationTime.ToString("yyyy-MM-dd HH:mm")
+                        Analiz zamanı: @FormatDateTime(review.CreationTime)
                     </p>
                 </div>
             </div>
@@ -437,18 +571,125 @@ else
     [Parameter] public Guid SessionId { get; set; }
 
     private SessionDetailDto? _detail;
+    private RecordingExistsResponse? _recordingExists;
+
     private string? _errorMessage;
+    private string? _warningMessage;
+
+    private bool _recordingStatusLoading;
 
     protected override async Task OnInitializedAsync()
     {
         try
         {
             _detail = await ReportsApp.GetSessionDetailAsync(SessionId);
+            await LoadRecordingExistsAsync();
         }
         catch (Exception ex)
         {
             _errorMessage = ex.Message;
         }
+    }
+
+    private async Task LoadRecordingExistsAsync()
+    {
+        _recordingStatusLoading = true;
+
+        try
+        {
+            var script =
+                "fetch('/api/recordings/exists?sessionId=" + SessionId + "', { cache: 'no-store' })" +
+                ".then(r => r.ok ? r.json() : null)" +
+                ".catch(() => null)";
+
+            _recordingExists = await JS.InvokeAsync<RecordingExistsResponse?>("eval", script);
+        }
+        catch (Exception ex)
+        {
+            _warningMessage = "Kayıt dosya durumu kontrol edilemedi: " + ex.Message;
+        }
+        finally
+        {
+            _recordingStatusLoading = false;
+        }
+    }
+
+    private bool HasCandidateRecording()
+    {
+        if (_detail == null)
+        {
+            return false;
+        }
+
+        if (_recordingExists?.CamExists == true)
+        {
+            return true;
+        }
+
+        return _detail.HasCandidateRecording && !_detail.CandidateRecordingStorageDeleted;
+    }
+
+    private bool HasScreenRecording()
+    {
+        if (_detail == null)
+        {
+            return false;
+        }
+
+        if (_recordingExists?.ScreenExists == true)
+        {
+            return true;
+        }
+
+        return _detail.HasScreenRecording && !_detail.ScreenRecordingStorageDeleted;
+    }
+
+    private string? GetCandidateFileName()
+    {
+        return !string.IsNullOrWhiteSpace(_recordingExists?.CamFileName)
+            ? _recordingExists.CamFileName
+            : _detail?.CandidateRecordingFileName;
+    }
+
+    private string? GetScreenFileName()
+    {
+        return !string.IsNullOrWhiteSpace(_recordingExists?.ScreenFileName)
+            ? _recordingExists.ScreenFileName
+            : _detail?.ScreenRecordingFileName;
+    }
+
+    private long? GetCandidateSizeBytes()
+    {
+        return _recordingExists?.CamSize > 0
+            ? _recordingExists.CamSize
+            : _detail?.CandidateRecordingSizeBytes;
+    }
+
+    private long? GetScreenSizeBytes()
+    {
+        return _recordingExists?.ScreenSize > 0
+            ? _recordingExists.ScreenSize
+            : _detail?.ScreenRecordingSizeBytes;
+    }
+
+    private DateTime? GetCandidateUploadedAt()
+    {
+        return _recordingExists?.CamUploadedAt ?? _detail?.CandidateRecordingUploadedAt;
+    }
+
+    private DateTime? GetScreenUploadedAt()
+    {
+        return _recordingExists?.ScreenUploadedAt ?? _detail?.ScreenRecordingUploadedAt;
+    }
+
+    private DateTime? GetCandidateExpiresAt()
+    {
+        return _recordingExists?.CamExpiresAt ?? _detail?.CandidateRecordingExpiresAt;
+    }
+
+    private DateTime? GetScreenExpiresAt()
+    {
+        return _recordingExists?.ScreenExpiresAt ?? _detail?.ScreenRecordingExpiresAt;
     }
 
     private void GoBack()
@@ -468,6 +709,81 @@ else
             : $"{url}?v={cacheKey}";
     }
 
+    private static string FormatDateTime(DateTime? date)
+    {
+        return date.HasValue
+            ? date.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")
+            : "-";
+    }
+
+    private static string FormatBytes(long? bytes)
+    {
+        if (!bytes.HasValue || bytes.Value <= 0)
+        {
+            return "-";
+        }
+
+        if (bytes.Value < 1024)
+        {
+            return $"{bytes.Value} B";
+        }
+
+        var kb = bytes.Value / 1024d;
+
+        if (kb < 1024)
+        {
+            return $"{kb:0.0} KB";
+        }
+
+        var mb = kb / 1024d;
+
+        if (mb < 1024)
+        {
+            return $"{mb:0.0} MB";
+        }
+
+        var gb = mb / 1024d;
+
+        return $"{gb:0.00} GB";
+    }
+
+    private RenderFragment RenderRecordingMetadata(
+        string? fileName,
+        long? sizeBytes,
+        DateTime? uploadedAt,
+        DateTime? expiresAt)
+    {
+        return builder =>
+        {
+            var seq = 0;
+
+            builder.OpenElement(seq++, "div");
+            builder.AddAttribute(seq++, "class", "border rounded bg-light p-2 small");
+
+            builder.OpenElement(seq++, "div");
+            builder.AddMarkupContent(seq++, "<b>Dosya:</b> ");
+            builder.AddContent(seq++, string.IsNullOrWhiteSpace(fileName) ? "-" : fileName);
+            builder.CloseElement();
+
+            builder.OpenElement(seq++, "div");
+            builder.AddMarkupContent(seq++, "<b>Boyut:</b> ");
+            builder.AddContent(seq++, FormatBytes(sizeBytes));
+            builder.CloseElement();
+
+            builder.OpenElement(seq++, "div");
+            builder.AddMarkupContent(seq++, "<b>Upload:</b> ");
+            builder.AddContent(seq++, FormatDateTime(uploadedAt));
+            builder.CloseElement();
+
+            builder.OpenElement(seq++, "div");
+            builder.AddMarkupContent(seq++, "<b>Planlanan silinme:</b> ");
+            builder.AddContent(seq++, FormatDateTime(expiresAt));
+            builder.CloseElement();
+
+            builder.CloseElement();
+        };
+    }
+
     private static List<string> SplitFlags(string? flags)
     {
         if (string.IsNullOrWhiteSpace(flags))
@@ -479,5 +795,53 @@ else
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Where(x => !string.IsNullOrWhiteSpace(x))
             .ToList();
+    }
+
+    private sealed class RecordingExistsResponse
+    {
+        [JsonPropertyName("ok")]
+        public bool Ok { get; set; }
+
+        [JsonPropertyName("sessionId")]
+        public Guid SessionId { get; set; }
+
+        [JsonPropertyName("root")]
+        public string? Root { get; set; }
+
+        [JsonPropertyName("camExists")]
+        public bool CamExists { get; set; }
+
+        [JsonPropertyName("camFileName")]
+        public string? CamFileName { get; set; }
+
+        [JsonPropertyName("camSize")]
+        public long? CamSize { get; set; }
+
+        [JsonPropertyName("camMetadataFound")]
+        public bool CamMetadataFound { get; set; }
+
+        [JsonPropertyName("camUploadedAt")]
+        public DateTime? CamUploadedAt { get; set; }
+
+        [JsonPropertyName("camExpiresAt")]
+        public DateTime? CamExpiresAt { get; set; }
+
+        [JsonPropertyName("screenExists")]
+        public bool ScreenExists { get; set; }
+
+        [JsonPropertyName("screenFileName")]
+        public string? ScreenFileName { get; set; }
+
+        [JsonPropertyName("screenSize")]
+        public long? ScreenSize { get; set; }
+
+        [JsonPropertyName("screenMetadataFound")]
+        public bool ScreenMetadataFound { get; set; }
+
+        [JsonPropertyName("screenUploadedAt")]
+        public DateTime? ScreenUploadedAt { get; set; }
+
+        [JsonPropertyName("screenExpiresAt")]
+        public DateTime? ScreenExpiresAt { get; set; }
     }
 }
