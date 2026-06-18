@@ -1,58 +1,255 @@
-﻿# DenemeTest
+# DenemeTest - Online Mülakat ve Sınav Sistemi
 
-## About this solution
+DenemeTest, C# .NET, ABP Framework, Blazor Server, PostgreSQL ve Docker teknolojileriyle geliştirilmiş online mülakat ve sınav yönetim sistemidir.
 
-This is a layered startup solution based on [Domain Driven Design (DDD)](https://abp.io/docs/latest/framework/architecture/domain-driven-design) practises. All the fundamental ABP modules are already installed. Check the [Application Startup Template](https://abp.io/docs/latest/solution-templates/layered-web-application) documentation for more info.
+Proje; adaylara tek kullanımlık sınav davet linki gönderilmesi, adayın kamera/mikrofon ve tüm ekran paylaşımı izni vererek sınava başlaması, sınav sırasında kamera ve ekran kaydının alınması, proctoring ihlallerinin takip edilmesi ve admin panelde detaylı sınav raporlarının görüntülenmesi üzerine kuruludur.
 
-### Pre-requirements
+## Kullanılan Teknolojiler
 
-* [.NET9.0+ SDK](https://dotnet.microsoft.com/download/dotnet)
-* [Node v18 or 20](https://nodejs.org/en)
+* C#
+* .NET
+* ABP Framework
+* Blazor Server
+* PostgreSQL
+* Docker
+* Entity Framework Core
+* JavaScript
+* MediaRecorder API
+* Monaco Editor
+* Roslyn Code Execution
 
-### Configurations
+## Temel Özellikler
 
-The solution comes with a default configuration that works out of the box. However, you may consider to change the following configuration before running your solution:
+### Aday Sınav Akışı
 
-* Check the `ConnectionStrings` in `appsettings.json` files under the `DenemeTest.Blazor` and `DenemeTest.DbMigrator` projects and change it if you need.
+* Adaya tek kullanımlık sınav davet linki gönderilir.
+* Aday sınav başlangıç ekranında kamera ve mikrofon izni verir.
+* Aday pencere veya sekme değil, zorunlu olarak tüm ekran paylaşımı yapar.
+* Aday kayıt ve güvenlik şartlarını kabul etmeden sınava başlayamaz.
+* Sınav başladıktan sonra sorular doğrudan yüklenir.
+* Sınav boyunca kamera ve ekran kaydı alınır.
+* Sınav bitince kayıtlar sunucuya yüklenir.
 
-### Before running the application
+### Proctoring ve Güvenlik
 
-* Run `abp install-libs` command on your solution folder to install client-side package dependencies. This step is automatically done when you create a new solution, if you didn't especially disabled it. However, you should run it yourself if you have first cloned this solution from your source control, or added a new client-side package dependency to your solution.
-* Run `DenemeTest.DbMigrator` to create the initial database. This step is also automatically done when you create a new solution, if you didn't especially disabled it. This should be done in the first run. It is also needed if a new database migration is added to the solution later.
+Sınav sırasında aşağıdaki davranışlar ihlal olarak algılanır:
 
-#### Generating a Signing Certificate
+* Sekme değiştirme
+* Alt+Tab / pencere değiştirme
+* Odak kaybı
+* Sayfa yenileme
+* Ekran paylaşımını kapatma
+* Geliştirici araçları açma girişimi
 
-In the production environment, you need to use a production signing certificate. ABP Framework sets up signing and encryption certificates in your application and expects an `openiddict.pfx` file in your application.
+İhlal durumunda sınav otomatik olarak iptal edilir. İptal sebebi ve adayın iptal anındaki puanı admin raporuna yansır.
 
-To generate a signing certificate, you can use the following command:
+### Kamera ve Ekran Kaydı
 
-```bash
-dotnet dev-certs https -v -ep openiddict.pfx -p d9b3228b-b4c5-4531-9e03-5b33d5db9765
+Sistem adayın kamera kaydını ve ekran kaydını ayrı `.webm` dosyaları olarak saklar.
+
+Video dosyaları PostgreSQL içine kaydedilmez. PostgreSQL sadece kayıt metadata bilgisini tutar.
+
+Metadata içinde şu bilgiler bulunur:
+
+* ExamSessionId
+* Kayıt türü: Kamera / Ekran
+* Dosya adı
+* Storage path
+* MIME type
+* Dosya boyutu
+* Upload zamanı
+* Planlanan silinme zamanı
+* Silinme durumu
+
+Bu yapı sayesinde büyük video dosyaları veritabanını şişirmez ve sistem daha ölçeklenebilir hale gelir.
+
+### Admin Panel
+
+Admin panelde aşağıdaki bilgiler görüntülenebilir:
+
+* Aday bilgileri
+* Sınav durumu
+* Aday puanı
+* Aday cevapları
+* Proctoring ihlalleri
+* Kamera kaydı
+* Ekran kaydı
+* Kod sorusu test sonuçları
+* Kod inceleme sonuçları
+
+Admin bir sınav oturumunu sildiğinde ilgili cevaplar, skorlar, proctoring eventleri, code review kayıtları, recording metadata kayıtları ve fiziksel video dosyaları temizlenir.
+
+### Kodlama Soruları
+
+Kodlama sorularında aday C# kodu yazabilir.
+
+Özellikler:
+
+* Monaco Editor entegrasyonu
+* C# kod çalıştırma
+* Test case bazlı değerlendirme
+* Gizli input / expected output mantığı
+* Başarılı / başarısız test sonucu
+* Adaya kullanıcı dostu hata mesajı gösterme
+
+Kod çalıştırma tarafında demo güvenliği için aşağıdaki kontroller eklenmiştir:
+
+* Kod uzunluğu limiti
+* Input limiti
+* Output limiti
+* Timeout kontrolü
+* `System.IO` engeli
+* `System.Net` engeli
+* `Process` engeli
+* `Reflection` engeli
+* `Environment` engeli
+* `DllImport` / `unsafe` engeli
+* Sonsuz döngü kontrolleri
+
+Production ortamı için kod çalıştırma modülünün Docker sandbox veya ayrı izole servis yapısına taşınması önerilir.
+
+## Proje Mimarisi
+
+Proje ABP katmanlı mimari yapısına uygun olarak geliştirilmiştir.
+
+### Domain Katmanı
+
+Başlıca entity yapıları:
+
+* Test
+* Question
+* QuestionOption
+* CodeTestCase
+* Candidate
+* ExamInvitation
+* ExamSession
+* Answer
+* Score
+* ProctoringEvent
+* ExamRecording
+* CodeReview
+
+### Application Katmanı
+
+Başlıca servisler:
+
+* TestAppService
+* ExamSessionAppService
+* ExamRunAppService
+* ReportsAppService
+* CodeExecutionAppService
+* RoslynCodeRunner
+
+### Blazor Katmanı
+
+* Admin test yönetimi
+* Admin rapor ekranı
+* Admin oturum detay ekranı
+* Aday sınav başlangıç ekranı
+* Aday sınav runner ekranı
+
+### JavaScript Modülleri
+
+* `exam-media.js`
+
+  * Kamera/mikrofon izinleri
+  * Tüm ekran paylaşımı kontrolü
+
+* `recorder.js`
+
+  * Kamera kaydı
+  * Ekran kaydı
+  * Kayıt upload işlemleri
+
+* `examProctor.js`
+
+  * Sekme değişimi kontrolü
+  * Odak kaybı kontrolü
+  * Alt+Tab / reload / devtools kısayol kontrolleri
+
+* `codeEditor.js`
+
+  * Monaco Editor entegrasyonu
+
+## Kurulum
+
+### Gereksinimler
+
+* .NET SDK
+* Docker Desktop
+* PostgreSQL
+* pgAdmin
+* Visual Studio veya VS Code
+
+### Örnek Connection String
+
+```json
+{
+  "ConnectionStrings": {
+    "Default": "Host=localhost;Port=5436;Database=DenemeTest;Username=appuser;Password=apppass"
+  }
+}
 ```
 
-> `d9b3228b-b4c5-4531-9e03-5b33d5db9765` is the password of the certificate, you can change it to any password you want.
+### Migration Çalıştırma
 
-It is recommended to use **two** RSA certificates, distinct from the certificate(s) used for HTTPS: one for encryption, one for signing.
+```bash
+dotnet build
+dotnet run --project src/DenemeTest.DbMigrator
+```
 
-For more information, please refer to: [OpenIddict Certificate Configuration](https://documentation.openiddict.com/configuration/encryption-and-signing-credentials.html#registering-a-certificate-recommended-for-production-ready-scenarios)
+### Uygulamayı Çalıştırma
 
-> Also, see the [Configuring OpenIddict](https://abp.io/docs/latest/Deployment/Configuring-OpenIddict#production-environment) documentation for more information.
+```bash
+dotnet run --project src/DenemeTest.Blazor
+```
 
-### Solution structure
+veya Visual Studio üzerinden Blazor projesi başlatılabilir.
 
-This is a layered monolith application that consists of the following applications:
+## Kayıt Storage Mantığı
 
-* `DenemeTest.DbMigrator`: A console application which applies the migrations and also seeds the initial data. It is useful on development as well as on production environment.
-* `DenemeTest.Blazor`: ASP.NET Core Blazor Server application that is the essential web application of the solution.
+Local geliştirme ortamında kayıtlar şu klasörde tutulur:
 
+```text
+App_Data/recordings
+```
 
-## Deploying the application
+Production ortamı için önerilen storage çözümleri:
 
-Deploying an ABP application follows the same process as deploying any .NET or ASP.NET Core application. However, there are important considerations to keep in mind. For detailed guidance, refer to ABP's [deployment documentation](https://abp.io/docs/latest/Deployment/Index).
+* MinIO
+* AWS S3
+* Cloudflare R2
+* Azure Blob Storage
 
-### Additional resources
+## Production İçin Geliştirme Notları
 
-You can see the following resources to learn more about your solution and the ABP Framework:
+Bu proje demo ve ürün prototipi seviyesinde çalışır durumdadır. Production ortamı için aşağıdaki geliştirmeler önerilir:
 
-* [Web Application Development Tutorial](https://abp.io/docs/latest/tutorials/book-store/part-1)
-* [Application Startup Template](https://abp.io/docs/latest/startup-templates/application/index)
+* Recording upload token sistemi
+* Chunk-based upload mimarisi
+* Object storage entegrasyonu
+* Recording retention background worker
+* Kod çalıştırma için Docker sandbox
+* Daha detaylı rol/yetki kontrolü
+* Audit log raporları
+* KVKK aydınlatma metni sayfası
+* Rate limit / request limit
+* Reverse proxy ve HTTPS deployment
+
+## Proje Durumu
+
+Proje şu anda demo, teknik sunum ve iş görüşmesi için gösterilebilir seviyededir.
+
+Tamamlanan ana özellikler:
+
+* Online sınav akışı
+* Tek kullanımlık davet linki
+* Kamera/mikrofon izni
+* Tüm ekran paylaşımı zorunluluğu
+* Kamera ve ekran kaydı
+* Admin raporları
+* Proctoring ihlal takibi
+* Kod sorusu çalıştırma
+* Recording metadata sistemi
+* Video oynatma ve indirme
+* Session silme ve video temizleme
