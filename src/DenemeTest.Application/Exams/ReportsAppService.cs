@@ -24,6 +24,7 @@ namespace DenemeTest.Application.Exams
         private readonly IRepository<QuestionOption, Guid> _optionRepo;
         private readonly IRepository<ProctoringEvent, Guid> _proctoringEventRepo;
         private readonly IRepository<CodeReview, Guid> _codeReviewRepo;
+        private readonly IRepository<ExamRecording, Guid> _recordingRepo;
 
         public ReportsAppService(
             IRepository<Score, Guid> scoreRepo,
@@ -33,7 +34,8 @@ namespace DenemeTest.Application.Exams
             IRepository<Question, Guid> questionRepo,
             IRepository<QuestionOption, Guid> optionRepo,
             IRepository<ProctoringEvent, Guid> proctoringEventRepo,
-            IRepository<CodeReview, Guid> codeReviewRepo)
+            IRepository<CodeReview, Guid> codeReviewRepo,
+            IRepository<ExamRecording, Guid> recordingRepo)
         {
             _scoreRepo = scoreRepo;
             _sessionRepo = sessionRepo;
@@ -43,6 +45,7 @@ namespace DenemeTest.Application.Exams
             _optionRepo = optionRepo;
             _proctoringEventRepo = proctoringEventRepo;
             _codeReviewRepo = codeReviewRepo;
+            _recordingRepo = recordingRepo;
         }
 
         public async Task<LeaderboardItemDto[]> GetLeaderboardAsync(int take)
@@ -151,6 +154,7 @@ namespace DenemeTest.Application.Exams
                 RecordingExistsUrl = $"/api/recordings/exists?sessionId={session.Id}"
             };
 
+            await FillRecordingsAsync(dto, sessionId);
             await FillAnswersAsync(dto, session);
             await FillCodeReviewsAsync(dto, sessionId);
             await FillProctoringEventsAsync(dto, sessionId);
@@ -166,6 +170,67 @@ namespace DenemeTest.Application.Exams
             return scores
                 .OrderByDescending(score => score.CreationTime)
                 .FirstOrDefault();
+        }
+
+        private async Task FillRecordingsAsync(SessionDetailDto dto, Guid sessionId)
+        {
+            var recordings = await _recordingRepo.GetListAsync(recording =>
+                recording.ExamSessionId == sessionId);
+
+            if (!recordings.Any())
+            {
+                dto.HasCandidateRecording = false;
+                dto.HasScreenRecording = false;
+                return;
+            }
+
+            var camRecording = recordings
+                .Where(recording => recording.Kind == ExamRecordingKind.Cam)
+                .OrderByDescending(recording => recording.UploadedAt)
+                .ThenByDescending(recording => recording.CreationTime)
+                .FirstOrDefault();
+
+            var screenRecording = recordings
+                .Where(recording => recording.Kind == ExamRecordingKind.Screen)
+                .OrderByDescending(recording => recording.UploadedAt)
+                .ThenByDescending(recording => recording.CreationTime)
+                .FirstOrDefault();
+
+            if (camRecording != null)
+            {
+                dto.HasCandidateRecording =
+                    !camRecording.IsStorageDeleted &&
+                    camRecording.SizeBytes > 0;
+
+                dto.CandidateRecordingFileName = camRecording.FileName;
+                dto.CandidateRecordingSizeBytes = camRecording.SizeBytes;
+                dto.CandidateRecordingUploadedAt = camRecording.UploadedAt;
+                dto.CandidateRecordingExpiresAt = camRecording.ExpiresAt;
+                dto.CandidateRecordingStorageDeleted = camRecording.IsStorageDeleted;
+                dto.CandidateRecordingStorageDeletedAt = camRecording.StorageDeletedAt;
+            }
+            else
+            {
+                dto.HasCandidateRecording = false;
+            }
+
+            if (screenRecording != null)
+            {
+                dto.HasScreenRecording =
+                    !screenRecording.IsStorageDeleted &&
+                    screenRecording.SizeBytes > 0;
+
+                dto.ScreenRecordingFileName = screenRecording.FileName;
+                dto.ScreenRecordingSizeBytes = screenRecording.SizeBytes;
+                dto.ScreenRecordingUploadedAt = screenRecording.UploadedAt;
+                dto.ScreenRecordingExpiresAt = screenRecording.ExpiresAt;
+                dto.ScreenRecordingStorageDeleted = screenRecording.IsStorageDeleted;
+                dto.ScreenRecordingStorageDeletedAt = screenRecording.StorageDeletedAt;
+            }
+            else
+            {
+                dto.HasScreenRecording = false;
+            }
         }
 
         private async Task FillAnswersAsync(SessionDetailDto dto, ExamSession session)
@@ -361,6 +426,14 @@ namespace DenemeTest.Application.Exams
             foreach (var codeReview in codeReviews)
             {
                 await _codeReviewRepo.DeleteAsync(codeReview, autoSave: false);
+            }
+
+            var recordings = await _recordingRepo.GetListAsync(recording =>
+                recording.ExamSessionId == sessionId);
+
+            foreach (var recording in recordings)
+            {
+                await _recordingRepo.DeleteAsync(recording, autoSave: false);
             }
 
             await _sessionRepo.DeleteAsync(session, autoSave: true);

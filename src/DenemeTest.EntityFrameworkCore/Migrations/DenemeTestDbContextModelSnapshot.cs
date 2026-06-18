@@ -85,6 +85,12 @@ namespace DenemeTest.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("ExamSessionId");
+
+                    b.HasIndex("QuestionId");
+
+                    b.HasIndex("ExamSessionId", "QuestionId");
+
                     b.ToTable("AppAnswers", (string)null);
                 });
 
@@ -407,13 +413,117 @@ namespace DenemeTest.Migrations
                     b.ToTable("AppExamInvitations", (string)null);
                 });
 
+            modelBuilder.Entity("DenemeTest.Exams.ExamRecording", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ConcurrencyStamp")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)")
+                        .HasColumnName("ConcurrencyStamp");
+
+                    b.Property<DateTime>("CreationTime")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("CreationTime");
+
+                    b.Property<Guid?>("CreatorId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("CreatorId");
+
+                    b.Property<Guid?>("DeleterId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("DeleterId");
+
+                    b.Property<DateTime?>("DeletionTime")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("DeletionTime");
+
+                    b.Property<Guid>("ExamSessionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ExtraProperties")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("ExtraProperties");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
+                    b.Property<bool>("IsDeleted")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("IsDeleted");
+
+                    b.Property<bool>("IsStorageDeleted")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
+
+                    b.Property<int>("Kind")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("LastModificationTime")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("LastModificationTime");
+
+                    b.Property<Guid?>("LastModifierId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("LastModifierId");
+
+                    b.Property<string>("MimeType")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasDefaultValue("video/webm");
+
+                    b.Property<long>("SizeBytes")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasDefaultValue(0L);
+
+                    b.Property<DateTime?>("StorageDeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("StoragePath")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<DateTime>("UploadedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExamSessionId");
+
+                    b.HasIndex("ExpiresAt");
+
+                    b.HasIndex("IsStorageDeleted");
+
+                    b.HasIndex("ExamSessionId", "Kind")
+                        .IsUnique();
+
+                    b.ToTable("AppExamRecordings", (string)null);
+                });
+
             modelBuilder.Entity("DenemeTest.Exams.ExamSession", b =>
                 {
                     b.Property<Guid>("Id")
                         .HasColumnType("uuid");
 
                     b.Property<string>("CancelReason")
-                        .HasColumnType("text");
+                        .HasMaxLength(4000)
+                        .HasColumnType("character varying(4000)");
 
                     b.Property<Guid>("CandidateId")
                         .HasColumnType("uuid");
@@ -479,6 +589,14 @@ namespace DenemeTest.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("CandidateId");
+
+                    b.HasIndex("FinishedAt");
+
+                    b.HasIndex("StartedAt");
+
+                    b.HasIndex("TestId");
+
                     b.ToTable("AppExamSessions", (string)null);
                 });
 
@@ -540,6 +658,8 @@ namespace DenemeTest.Migrations
                         .HasColumnType("integer");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("ExamSessionId");
 
                     b.ToTable("AppProctoringEvents", (string)null);
                 });
@@ -737,6 +857,8 @@ namespace DenemeTest.Migrations
                         .HasColumnType("integer");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("ExamSessionId");
 
                     b.ToTable("AppScores", (string)null);
                 });
@@ -2688,6 +2810,15 @@ namespace DenemeTest.Migrations
                     b.HasOne("DenemeTest.Exams.Test", null)
                         .WithMany()
                         .HasForeignKey("TestId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("DenemeTest.Exams.ExamRecording", b =>
+                {
+                    b.HasOne("DenemeTest.Exams.ExamSession", null)
+                        .WithMany()
+                        .HasForeignKey("ExamSessionId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

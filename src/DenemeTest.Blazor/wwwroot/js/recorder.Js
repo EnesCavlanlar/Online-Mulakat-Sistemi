@@ -13,23 +13,42 @@ window.examRecorder = (function () {
     let camBuffers = [];
     let screenBuffers = [];
 
+    let camBytes = 0;
+    let screenBytes = 0;
+
     let started = false;
     let stopping = false;
     let intentionalStop = false;
 
-    function pickMime() {
-        if (window.MediaRecorder && MediaRecorder.isTypeSupported("video/webm;codecs=vp9")) {
-            return { mimeType: "video/webm;codecs=vp9" };
+    const RECORDER_TIMESLICE_MS = 1000;
+    const MIN_UPLOAD_BYTES = 1024;
+
+    function pickMimeForStream(stream, label) {
+        const hasAudio = !!(stream && stream.getAudioTracks && stream.getAudioTracks().some(t => t.readyState === "live"));
+
+        const candidates = hasAudio
+            ? [
+                "video/webm;codecs=vp8,opus",
+                "video/webm;codecs=vp8",
+                "video/webm"
+            ]
+            : [
+                "video/webm;codecs=vp8",
+                "video/webm"
+            ];
+
+        for (const mime of candidates) {
+            try {
+                if (window.MediaRecorder && MediaRecorder.isTypeSupported(mime)) {
+                    console.log("[recorder] mime seçildi:", label, mime);
+                    return { mimeType: mime };
+                }
+            } catch (e) {
+                console.warn("[recorder] mime kontrol hatası:", label, mime, e);
+            }
         }
 
-        if (window.MediaRecorder && MediaRecorder.isTypeSupported("video/webm;codecs=vp8")) {
-            return { mimeType: "video/webm;codecs=vp8" };
-        }
-
-        if (window.MediaRecorder && MediaRecorder.isTypeSupported("video/webm")) {
-            return { mimeType: "video/webm" };
-        }
-
+        console.warn("[recorder] desteklenen özel mime bulunamadı, default kullanılacak:", label);
         return {};
     }
 
@@ -38,18 +57,26 @@ window.examRecorder = (function () {
 
         if (previewStream) {
             validateLiveStream(previewStream, "Kamera/mikrofon önizleme akışı aktif değil.");
+            validateCameraStream(previewStream);
             return previewStream;
         }
 
         const stream = await navigator.mediaDevices.getUserMedia({
-            video: true,
+            video: {
+                width: { ideal: 1280 },
+                height: { ideal: 720 },
+                frameRate: { ideal: 24, max: 30 }
+            },
             audio: {
                 echoCancellation: true,
-                noiseSuppression: true
+                noiseSuppression: true,
+                autoGainControl: true
             }
         });
 
         validateLiveStream(stream, "Kamera/mikrofon akışı başlatılamadı.");
+        validateCameraStream(stream);
+
         return stream;
     }
 
@@ -58,13 +85,14 @@ window.examRecorder = (function () {
 
         if (previewStream) {
             validateLiveStream(previewStream, "Ekran paylaşımı önizleme akışı aktif değil.");
+            validateScreenStream(previewStream);
             validateFullScreenShare(previewStream);
             return previewStream;
         }
 
         const stream = await navigator.mediaDevices.getDisplayMedia({
             video: {
-                frameRate: 25,
+                frameRate: { ideal: 15, max: 25 },
                 displaySurface: "monitor"
             },
             audio: false,
@@ -74,6 +102,7 @@ window.examRecorder = (function () {
         });
 
         validateLiveStream(stream, "Ekran paylaşımı başlatılamadı.");
+        validateScreenStream(stream);
         validateFullScreenShare(stream);
 
         return stream;
@@ -113,62 +142,47 @@ window.examRecorder = (function () {
 
             camBuffers = [];
             screenBuffers = [];
+            camBytes = 0;
+            screenBytes = 0;
 
             camStream = await ensureCam();
             screenStream = await ensureScreen();
 
-            const camOptions = pickMime();
-            const screenOptions = pickMime();
+            logStreamInfo("cam", camStream);
+            logStreamInfo("screen", screenStream);
+
+            const camOptions = pickMimeForStream(camStream, "cam");
+            const screenOptions = pickMimeForStream(screenStream, "screen");
 
             camRecorder = new MediaRecorder(camStream, camOptions);
             screenRecorder = new MediaRecorder(screenStream, screenOptions);
 
-            camRecorder.ondataavailable = function (event) {
-                if (event.data && event.data.size > 0) {
-                    camBuffers.push(event.data);
-                }
-            };
+            attachRecorderHandlers(camRecorder, "cam", camBuffers, function (size) {
+                camBytes += size;
+            });
 
-            screenRecorder.ondataavailable = function (event) {
-                if (event.data && event.data.size > 0) {
-                    screenBuffers.push(event.data);
-                }
-            };
+            attachRecorderHandlers(screenRecorder, "screen", screenBuffers, function (size) {
+                screenBytes += size;
+            });
 
-            camRecorder.onerror = function (event) {
-                console.error("[recorder] kamera recorder hatası:", event);
-            };
+            attachTrackEndHandlers();
 
-            screenRecorder.onerror = function (event) {
-                console.error("[recorder] ekran recorder hatası:", event);
-            };
+            camRecorder.start(RECORDER_TIMESLICE_MS);
+            screenRecorder.start(RECORDER_TIMESLICE_MS);
 
-            const screenTrack = screenStream.getVideoTracks()[0];
+            await delay(250);
 
-            if (screenTrack) {
-                screenTrack.addEventListener("ended", function () {
-                    if (intentionalStop || stopping) {
-                        return;
-                    }
-
-                    console.warn("[recorder] ekran paylaşımı aday tarafından sonlandırıldı.");
-
-                    try {
-                        if (window.examProctor && typeof window.examProctor.hardCancel === "function") {
-                            window.examProctor.hardCancel("Ekran paylaşımı sonlandırıldı.");
-                        }
-                    } catch (e) {
-                        console.warn("[recorder] examProctor hardCancel error", e);
-                    }
-                });
+            if (camRecorder.state !== "recording") {
+                throw new Error("Kamera recorder recording state'e geçemedi. State: " + camRecorder.state);
             }
 
-            camRecorder.start(1000);
-            screenRecorder.start(1000);
+            if (screenRecorder.state !== "recording") {
+                throw new Error("Ekran recorder recording state'e geçemedi. State: " + screenRecorder.state);
+            }
 
             started = true;
 
-            console.log("[recorder] kayıt başladı:", sessionId);
+            console.log("[recorder] kayıt başladı:", sessionId, getStatus());
             return true;
         } catch (e) {
             console.error("[recorder] start error", e);
@@ -193,26 +207,42 @@ window.examRecorder = (function () {
         stopping = true;
         intentionalStop = true;
 
+        const localCamRecorder = camRecorder;
+        const localScreenRecorder = screenRecorder;
+
         try {
-            await requestFinalDataSafely(camRecorder);
-            await requestFinalDataSafely(screenRecorder);
+            console.log("[recorder] stop başladı:", currentSessionId, getStatus());
+
+            await requestFinalDataSafely(localCamRecorder, "cam");
+            await requestFinalDataSafely(localScreenRecorder, "screen");
 
             await Promise.all([
-                stopRecorderAndWait(camRecorder),
-                stopRecorderAndWait(screenRecorder)
+                stopRecorderAndWait(localCamRecorder, "cam"),
+                stopRecorderAndWait(localScreenRecorder, "screen")
             ]);
 
-            // Stop sonrası final chunk'ın buffer'a düşmesi için kısa bekleme.
-            await delay(500);
+            await delay(1000);
 
-            const camUploadOk = await uploadOne(currentSessionId, "cam", camBuffers, camRecorder);
-            const screenUploadOk = await uploadOne(currentSessionId, "screen", screenBuffers, screenRecorder);
+            console.log("[recorder] stop sonrası buffer durumu:", {
+                sessionId: currentSessionId,
+                camChunks: camBuffers.length,
+                camBytes,
+                screenChunks: screenBuffers.length,
+                screenBytes,
+                camState: localCamRecorder ? localCamRecorder.state : null,
+                screenState: localScreenRecorder ? localScreenRecorder.state : null
+            });
+
+            const camUploadOk = await uploadOne(currentSessionId, "cam", camBuffers, localCamRecorder);
+            const screenUploadOk = await uploadOne(currentSessionId, "screen", screenBuffers, localScreenRecorder);
 
             console.log("[recorder] kayıt durduruldu:", currentSessionId, {
                 camUploadOk,
                 screenUploadOk,
                 camChunks: camBuffers.length,
-                screenChunks: screenBuffers.length
+                camBytes,
+                screenChunks: screenBuffers.length,
+                screenBytes
             });
         } catch (e) {
             console.error("[recorder] stop error", e);
@@ -228,10 +258,12 @@ window.examRecorder = (function () {
 
             camBuffers = [];
             screenBuffers = [];
+            camBytes = 0;
+            screenBytes = 0;
 
             await Promise.all([
-                stopRecorderAndWait(camRecorder),
-                stopRecorderAndWait(screenRecorder)
+                stopRecorderAndWait(camRecorder, "cam"),
+                stopRecorderAndWait(screenRecorder, "screen")
             ]);
 
             console.log("[recorder] kayıt iptal edildi, dosyalar yüklenmedi:", sessionId);
@@ -242,19 +274,107 @@ window.examRecorder = (function () {
         }
     }
 
-    async function requestFinalDataSafely(recorder) {
+    function attachRecorderHandlers(recorder, kind, buffers, addBytes) {
+        recorder.onstart = function () {
+            console.log("[recorder] recorder start:", kind, recorder.mimeType, recorder.state);
+        };
+
+        recorder.ondataavailable = function (event) {
+            const size = event && event.data ? event.data.size : 0;
+
+            if (event.data && size > 0) {
+                buffers.push(event.data);
+                addBytes(size);
+
+                console.log("[recorder] chunk:", kind, {
+                    size,
+                    chunks: buffers.length
+                });
+            } else {
+                console.warn("[recorder] boş chunk geldi:", kind, event);
+            }
+        };
+
+        recorder.onerror = function (event) {
+            console.error("[recorder] recorder hatası:", kind, event);
+        };
+
+        recorder.onpause = function () {
+            console.warn("[recorder] recorder pause:", kind);
+        };
+
+        recorder.onresume = function () {
+            console.log("[recorder] recorder resume:", kind);
+        };
+
+        recorder.onstop = function () {
+            console.log("[recorder] recorder stop event:", kind, {
+                chunks: buffers.length,
+                state: recorder.state
+            });
+        };
+    }
+
+    function attachTrackEndHandlers() {
+        const screenTrack = screenStream && screenStream.getVideoTracks
+            ? screenStream.getVideoTracks()[0]
+            : null;
+
+        if (screenTrack) {
+            screenTrack.addEventListener("ended", function () {
+                if (intentionalStop || stopping) {
+                    return;
+                }
+
+                console.warn("[recorder] ekran paylaşımı aday tarafından sonlandırıldı.");
+
+                try {
+                    if (window.examProctor && typeof window.examProctor.hardCancel === "function") {
+                        window.examProctor.hardCancel("Ekran paylaşımı sonlandırıldı.");
+                    }
+                } catch (e) {
+                    console.warn("[recorder] examProctor hardCancel error", e);
+                }
+            });
+        }
+
+        const camTrack = camStream && camStream.getVideoTracks
+            ? camStream.getVideoTracks()[0]
+            : null;
+
+        if (camTrack) {
+            camTrack.addEventListener("ended", function () {
+                if (intentionalStop || stopping) {
+                    return;
+                }
+
+                console.warn("[recorder] kamera video track sonlandı.");
+
+                try {
+                    if (window.examProctor && typeof window.examProctor.hardCancel === "function") {
+                        window.examProctor.hardCancel("Kamera görüntüsü sonlandırıldı.");
+                    }
+                } catch (e) {
+                    console.warn("[recorder] examProctor hardCancel error", e);
+                }
+            });
+        }
+    }
+
+    async function requestFinalDataSafely(recorder, kind) {
         try {
             if (recorder && recorder.state === "recording") {
                 recorder.requestData();
+                console.log("[recorder] requestData:", kind);
             }
         } catch (e) {
-            console.warn("[recorder] requestData error", e);
+            console.warn("[recorder] requestData error:", kind, e);
         }
 
-        await delay(250);
+        await delay(500);
     }
 
-    function stopRecorderAndWait(recorder) {
+    function stopRecorderAndWait(recorder, kind) {
         return new Promise(function (resolve) {
             try {
                 if (!recorder || recorder.state === "inactive") {
@@ -270,16 +390,16 @@ window.examRecorder = (function () {
                     }
 
                     resolved = true;
+                    console.log("[recorder] stop wait tamam:", kind);
                     resolve();
                 };
 
                 recorder.addEventListener("stop", done, { once: true });
                 recorder.stop();
 
-                // Bazı tarayıcılarda stop eventi geç gelebilir, akışı kilitlemeyelim.
-                setTimeout(done, 2500);
+                setTimeout(done, 5000);
             } catch (e) {
-                console.warn("[recorder] recorder stop error", e);
+                console.warn("[recorder] recorder stop error:", kind, e);
                 resolve();
             }
         });
@@ -302,11 +422,11 @@ window.examRecorder = (function () {
                 "video/webm";
 
             const blob = new Blob(buffers, {
-                type: mimeType
+                type: mimeType || "video/webm"
             });
 
-            if (blob.size <= 0) {
-                console.warn("[recorder] kayıt dosyası boş:", kind);
+            if (blob.size < MIN_UPLOAD_BYTES) {
+                console.warn("[recorder] kayıt dosyası çok küçük veya boş:", kind, blob.size);
                 return false;
             }
 
@@ -317,7 +437,12 @@ window.examRecorder = (function () {
                 "&kind=" + encodeURIComponent(kind) +
                 "&t=" + encodeURIComponent(Date.now().toString());
 
-            console.log("[recorder] kayıt yükleniyor:", kind, blob.size, uploadSessionId);
+            console.log("[recorder] kayıt yükleniyor:", kind, {
+                size: blob.size,
+                type: blob.type,
+                sessionId: uploadSessionId,
+                chunks: buffers.length
+            });
 
             const response = await fetch(url, {
                 method: "POST",
@@ -356,6 +481,46 @@ window.examRecorder = (function () {
         }
     }
 
+    function validateCameraStream(stream) {
+        const videoTracks = stream && stream.getVideoTracks
+            ? stream.getVideoTracks()
+            : [];
+
+        if (!videoTracks || videoTracks.length === 0) {
+            stopTracks(stream);
+            throw new Error("Kamera video track bulunamadı. Sadece mikrofon izni yeterli değildir.");
+        }
+
+        const liveVideo = videoTracks.some(function (track) {
+            return track.readyState === "live";
+        });
+
+        if (!liveVideo) {
+            stopTracks(stream);
+            throw new Error("Kamera video track aktif değil.");
+        }
+    }
+
+    function validateScreenStream(stream) {
+        const videoTracks = stream && stream.getVideoTracks
+            ? stream.getVideoTracks()
+            : [];
+
+        if (!videoTracks || videoTracks.length === 0) {
+            stopTracks(stream);
+            throw new Error("Ekran video track bulunamadı.");
+        }
+
+        const liveVideo = videoTracks.some(function (track) {
+            return track.readyState === "live";
+        });
+
+        if (!liveVideo) {
+            stopTracks(stream);
+            throw new Error("Ekran video track aktif değil.");
+        }
+    }
+
     function validateFullScreenShare(stream) {
         const videoTrack = stream && stream.getVideoTracks
             ? stream.getVideoTracks()[0]
@@ -380,6 +545,50 @@ window.examRecorder = (function () {
         if (displaySurface !== "monitor") {
             stopTracks(stream);
             throw new Error("Sınava devam etmek için pencere veya sekme değil, 'Tüm ekran' paylaşımı seçmelisin.");
+        }
+    }
+
+    function logStreamInfo(label, stream) {
+        try {
+            const tracks = stream && stream.getTracks ? stream.getTracks() : [];
+
+            console.log("[recorder] stream info:", label, tracks.map(function (track) {
+                const settings = track.getSettings ? track.getSettings() : {};
+                return {
+                    kind: track.kind,
+                    readyState: track.readyState,
+                    enabled: track.enabled,
+                    muted: track.muted,
+                    label: track.label,
+                    settings: settings
+                };
+            }));
+        } catch (e) {
+            console.warn("[recorder] stream info error:", label, e);
+        }
+    }
+
+    function getTrackState(stream, kind) {
+        try {
+            if (!stream) {
+                return "no-stream";
+            }
+
+            const tracks = kind === "audio"
+                ? stream.getAudioTracks()
+                : stream.getVideoTracks();
+
+            if (!tracks || tracks.length === 0) {
+                return "no-track";
+            }
+
+            return tracks
+                .map(function (track) {
+                    return track.readyState + (track.enabled ? ":enabled" : ":disabled");
+                })
+                .join(",");
+        } catch {
+            return "unknown";
         }
     }
 
@@ -414,6 +623,9 @@ window.examRecorder = (function () {
         camBuffers = [];
         screenBuffers = [];
 
+        camBytes = 0;
+        screenBytes = 0;
+
         started = false;
         stopping = false;
         intentionalStop = false;
@@ -434,10 +646,22 @@ window.examRecorder = (function () {
             sessionId,
             started,
             stopping,
+
             camChunks: camBuffers.length,
             screenChunks: screenBuffers.length,
+
+            camBytes,
+            screenBytes,
+
             camRecorderState: camRecorder ? camRecorder.state : null,
-            screenRecorderState: screenRecorder ? screenRecorder.state : null
+            screenRecorderState: screenRecorder ? screenRecorder.state : null,
+
+            camVideoTrackState: getTrackState(camStream, "video"),
+            camAudioTrackState: getTrackState(camStream, "audio"),
+            screenVideoTrackState: getTrackState(screenStream, "video"),
+
+            camMimeType: camRecorder ? camRecorder.mimeType : null,
+            screenMimeType: screenRecorder ? screenRecorder.mimeType : null
         };
     }
 

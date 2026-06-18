@@ -44,10 +44,10 @@
 
     <AbpScripts BundleName="@BlazorLeptonXLiteThemeBundles.Scripts.Global" />
 
-    <script src="/js/exam-media.js?v=16"></script>
-    <script src="/js/examProctor.js?v=13"></script>
-    <script src="/js/recorder.js?v=17"></script>
-    <script src="/js/codeEditor.js?v=2"></script>
+    <script src="/js/exam-media.js?v=17"></script>
+    <script src="/js/examProctor.js?v=14"></script>
+    <script src="/js/recorder.js?v=18"></script>
+    <script src="/js/codeEditor.js?v=3"></script>
 
     <script>
         window.examRunner = window.examRunner || {
@@ -55,12 +55,14 @@
                 try {
                     window.close();
                 } catch (e) {
+                    console.warn("window.close error", e);
                 }
 
                 setTimeout(function () {
                     try {
                         window.location.href = "/exam/finished";
                     } catch (e) {
+                        console.warn("redirect finished error", e);
                     }
                 }, 1500);
             }
@@ -83,10 +85,12 @@
                 startRecorderLoaded: !!(window.examRecorder && typeof window.examRecorder.start === "function"),
                 stopRecorderLoaded: !!(window.examRecorder && typeof window.examRecorder.stop === "function"),
                 cancelRecorderLoaded: !!(window.examRecorder && typeof window.examRecorder.cancel === "function"),
+                getStatusRecorderLoaded: !!(window.examRecorder && typeof window.examRecorder.getStatus === "function"),
 
                 codeEditorLoaded: !!window.codeEditor,
                 initCodeEditorLoaded: !!(window.codeEditor && typeof window.codeEditor.init === "function"),
                 getCodeEditorValueLoaded: !!(window.codeEditor && typeof window.codeEditor.getValue === "function"),
+                setDiagnosticsCodeEditorLoaded: !!(window.codeEditor && typeof window.codeEditor.setDiagnostics === "function"),
                 disposeCodeEditorLoaded: !!(window.codeEditor && typeof window.codeEditor.dispose === "function")
             };
         };

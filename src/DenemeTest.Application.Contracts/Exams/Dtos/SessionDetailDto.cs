@@ -29,11 +29,47 @@ namespace DenemeTest.Exams.Dtos
 
         public string? CancelReason { get; set; }
 
+        /*
+         * Eski video URL alanları.
+         * Reports.razor tarafında mevcut kullanım bozulmasın diye bırakıyoruz.
+         */
         public string CandidateRecordingUrl { get; set; } = string.Empty;
 
         public string ScreenRecordingUrl { get; set; } = string.Empty;
 
         public string RecordingExistsUrl { get; set; } = string.Empty;
+
+        /*
+         * Yeni DB metadata alanları.
+         * AppExamRecordings tablosundan doldurulacak.
+         */
+        public bool HasCandidateRecording { get; set; }
+
+        public bool HasScreenRecording { get; set; }
+
+        public string? CandidateRecordingFileName { get; set; }
+
+        public string? ScreenRecordingFileName { get; set; }
+
+        public long? CandidateRecordingSizeBytes { get; set; }
+
+        public long? ScreenRecordingSizeBytes { get; set; }
+
+        public DateTime? CandidateRecordingUploadedAt { get; set; }
+
+        public DateTime? ScreenRecordingUploadedAt { get; set; }
+
+        public DateTime? CandidateRecordingExpiresAt { get; set; }
+
+        public DateTime? ScreenRecordingExpiresAt { get; set; }
+
+        public bool CandidateRecordingStorageDeleted { get; set; }
+
+        public bool ScreenRecordingStorageDeleted { get; set; }
+
+        public DateTime? CandidateRecordingStorageDeletedAt { get; set; }
+
+        public DateTime? ScreenRecordingStorageDeletedAt { get; set; }
 
         public List<QuestionAnswerDetailDto> Answers { get; set; } = new();
 

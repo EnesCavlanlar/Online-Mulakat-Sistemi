@@ -38,8 +38,9 @@ public class DenemeTestDbContext :
     public DbSet<Answer> Answers { get; set; }
     public DbSet<ProctoringEvent> ProctoringEvents { get; set; }
     public DbSet<Score> Scores { get; set; }
-    //
     public DbSet<CodeReview> CodeReviews { get; set; }
+
+    public DbSet<ExamRecording> ExamRecordings { get; set; }
 
     #region Entities from the modules
 
@@ -90,7 +91,6 @@ public class DenemeTestDbContext :
             b.Property(x => x.ShuffleQuestions);
             b.Property(x => x.ShuffleOptions);
 
-            // Yeni alanlar
             b.Property(x => x.DurationMinutes)
                 .IsRequired()
                 .HasDefaultValue(60);
@@ -104,7 +104,7 @@ public class DenemeTestDbContext :
              .HasForeignKey(q => q.TestId)
              .OnDelete(DeleteBehavior.Cascade);
         });
-        //
+
         builder.Entity<CodeReview>(b =>
         {
             b.ToTable("AppCodeReviews");
@@ -135,9 +135,17 @@ public class DenemeTestDbContext :
         {
             b.ToTable("AppQuestions");
             b.ConfigureByConvention();
-            b.Property(x => x.Text).IsRequired().HasMaxLength(4000);
-            b.Property(x => x.Points).HasDefaultValue(1);
-            b.Property(x => x.Type).IsRequired();
+
+            b.Property(x => x.Text)
+                .IsRequired()
+                .HasMaxLength(4000);
+
+            b.Property(x => x.Points)
+                .HasDefaultValue(1);
+
+            b.Property(x => x.Type)
+                .IsRequired();
+
             b.HasMany(x => x.Options)
              .WithOne()
              .HasForeignKey(o => o.QuestionId)
@@ -148,8 +156,13 @@ public class DenemeTestDbContext :
         {
             b.ToTable("AppQuestionOptions");
             b.ConfigureByConvention();
-            b.Property(x => x.Text).IsRequired().HasMaxLength(2000);
-            b.Property(x => x.IsCorrect).IsRequired();
+
+            b.Property(x => x.Text)
+                .IsRequired()
+                .HasMaxLength(2000);
+
+            b.Property(x => x.IsCorrect)
+                .IsRequired();
         });
 
         builder.Entity<Candidate>(b =>
@@ -157,17 +170,25 @@ public class DenemeTestDbContext :
             b.ToTable("AppCandidates");
             b.ConfigureByConvention();
 
-            b.Property(x => x.FirstName).IsRequired().HasMaxLength(128);
-            b.Property(x => x.LastName).IsRequired().HasMaxLength(128);
-            b.Property(x => x.Email).IsRequired().HasMaxLength(256);
+            b.Property(x => x.FirstName)
+                .IsRequired()
+                .HasMaxLength(128);
 
-            // Yeni alan
+            b.Property(x => x.LastName)
+                .IsRequired()
+                .HasMaxLength(128);
+
+            b.Property(x => x.Email)
+                .IsRequired()
+                .HasMaxLength(256);
+
             b.Property(x => x.Status)
-             .IsRequired()
-             .HasMaxLength(64)
-             .HasDefaultValue("Pending");
+                .IsRequired()
+                .HasMaxLength(64)
+                .HasDefaultValue("Pending");
 
-            b.HasIndex(x => x.Email).IsUnique();
+            b.HasIndex(x => x.Email)
+                .IsUnique();
         });
 
         builder.Entity<ExamInvitation>(b =>
@@ -176,21 +197,27 @@ public class DenemeTestDbContext :
             b.ConfigureByConvention();
 
             b.Property(x => x.TokenHash)
-             .IsRequired()
-             .HasMaxLength(128);
+                .IsRequired()
+                .HasMaxLength(128);
 
             b.Property(x => x.ExpireAt)
-             .IsRequired();
+                .IsRequired();
 
             b.Property(x => x.SentAt);
             b.Property(x => x.UsedAt);
 
             b.Property(x => x.IsUsed)
-             .IsRequired()
-             .HasDefaultValue(false);
+                .IsRequired()
+                .HasDefaultValue(false);
 
-            b.HasIndex(x => x.TokenHash).IsUnique();
-            b.HasIndex(x => new { x.CandidateId, x.TestId });
+            b.HasIndex(x => x.TokenHash)
+                .IsUnique();
+
+            b.HasIndex(x => new
+            {
+                x.CandidateId,
+                x.TestId
+            });
 
             b.HasOne<Candidate>()
              .WithMany()
@@ -207,33 +234,124 @@ public class DenemeTestDbContext :
         {
             b.ToTable("AppExamSessions");
             b.ConfigureByConvention();
-            b.Property(x => x.IsCancelled).HasDefaultValue(false);
+
+            b.Property(x => x.IsCancelled)
+                .IsRequired()
+                .HasDefaultValue(false);
+
+            b.Property(x => x.CancelReason)
+                .HasMaxLength(4000);
+
+            b.HasIndex(x => x.TestId);
+            b.HasIndex(x => x.CandidateId);
+            b.HasIndex(x => x.StartedAt);
+            b.HasIndex(x => x.FinishedAt);
         });
 
         builder.Entity<Answer>(b =>
         {
             b.ToTable("AppAnswers");
             b.ConfigureByConvention();
+
             b.Property(x => x.TextAnswer);
-            // PostgreSQL jsonb
+
             b.Property(x => x.SelectedOptionIds)
-             .HasColumnType("jsonb");
+                .HasColumnType("jsonb");
+
+            b.HasIndex(x => x.ExamSessionId);
+            b.HasIndex(x => x.QuestionId);
+
+            b.HasIndex(x => new
+            {
+                x.ExamSessionId,
+                x.QuestionId
+            });
         });
 
         builder.Entity<ProctoringEvent>(b =>
         {
             b.ToTable("AppProctoringEvents");
             b.ConfigureByConvention();
-            b.Property(x => x.Type).IsRequired();
-            b.Property(x => x.Detail).HasMaxLength(2000);
+
+            b.Property(x => x.Type)
+                .IsRequired();
+
+            b.Property(x => x.Detail)
+                .HasMaxLength(2000);
+
+            b.HasIndex(x => x.ExamSessionId);
+            
         });
 
         builder.Entity<Score>(b =>
         {
             b.ToTable("AppScores");
             b.ConfigureByConvention();
-            b.Property(x => x.Value).IsRequired();
-            b.Property(x => x.Explanation).HasMaxLength(4000);
+
+            b.Property(x => x.Value)
+                .IsRequired();
+
+            b.Property(x => x.Explanation)
+                .HasMaxLength(4000);
+
+            b.HasIndex(x => x.ExamSessionId);
+        });
+
+        builder.Entity<ExamRecording>(b =>
+        {
+            b.ToTable("AppExamRecordings");
+            b.ConfigureByConvention();
+
+            b.Property(x => x.ExamSessionId)
+                .IsRequired();
+
+            b.Property(x => x.Kind)
+                .IsRequired();
+
+            b.Property(x => x.FileName)
+                .IsRequired()
+                .HasMaxLength(512);
+
+            b.Property(x => x.StoragePath)
+                .IsRequired()
+                .HasMaxLength(2000);
+
+            b.Property(x => x.MimeType)
+                .IsRequired()
+                .HasMaxLength(128)
+                .HasDefaultValue("video/webm");
+
+            b.Property(x => x.SizeBytes)
+                .IsRequired()
+                .HasDefaultValue(0);
+
+            b.Property(x => x.UploadedAt)
+                .IsRequired();
+
+            b.Property(x => x.ExpiresAt);
+
+            b.Property(x => x.IsStorageDeleted)
+                .IsRequired()
+                .HasDefaultValue(false);
+
+            b.Property(x => x.StorageDeletedAt);
+
+            b.HasOne<ExamSession>()
+             .WithMany()
+             .HasForeignKey(x => x.ExamSessionId)
+             .OnDelete(DeleteBehavior.Cascade);
+
+            b.HasIndex(x => x.ExamSessionId);
+
+            b.HasIndex(x => new
+            {
+                x.ExamSessionId,
+                x.Kind
+            }).IsUnique();
+
+            b.HasIndex(x => x.ExpiresAt);
+
+            b.HasIndex(x => x.IsStorageDeleted);
         });
 
         /* your custom tables... */

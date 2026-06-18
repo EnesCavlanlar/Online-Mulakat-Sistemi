@@ -1,24 +1,38 @@
-﻿using Microsoft.AspNetCore.Authorization;
+﻿using DenemeTest.Exams;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
 using System;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using Volo.Abp.Domain.Repositories;
+using Volo.Abp.Uow;
 
 namespace DenemeTest.Blazor.Controllers
 {
-    [AllowAnonymous]
     [ApiController]
     [IgnoreAntiforgeryToken]
     [Route("api/recordings")]
     public class RecordingController : ControllerBase
     {
         private readonly string _root;
+        private readonly IWebHostEnvironment _env;
+        private readonly IRepository<ExamRecording, Guid> _recordingRepository;
+        private readonly IRepository<ExamSession, Guid> _sessionRepository;
 
-        public RecordingController(IConfiguration config, IWebHostEnvironment env)
+        public RecordingController(
+            IConfiguration config,
+            IWebHostEnvironment env,
+            IRepository<ExamRecording, Guid> recordingRepository,
+            IRepository<ExamSession, Guid> sessionRepository)
         {
+            _env = env;
+            _recordingRepository = recordingRepository;
+            _sessionRepository = sessionRepository;
+
             var cfg = config.GetSection("Exam:RecordingTemp")?.Value;
 
             if (string.IsNullOrWhiteSpace(cfg))
@@ -34,9 +48,11 @@ namespace DenemeTest.Blazor.Controllers
         }
 
         // POST /api/recordings/finalize-upload?sessionId={guid}&mime=video/webm&kind=cam|screen
+        [AllowAnonymous]
         [HttpPost("finalize-upload")]
         [DisableRequestSizeLimit]
-        [RequestSizeLimit(1024L * 1024L * 1024L)]
+        [RequestSizeLimit(2L * 1024L * 1024L * 1024L)]
+        [UnitOfWork]
         public async Task<IActionResult> FinalizeUpload(
             [FromQuery] Guid sessionId,
             [FromQuery] string? mime,
@@ -47,9 +63,9 @@ namespace DenemeTest.Blazor.Controllers
                 return BadRequest("sessionId boş olamaz.");
             }
 
-            var normalizedKind = NormalizeKind(kind);
+            var kindEnum = NormalizeKindEnum(kind);
 
-            if (normalizedKind == null)
+            if (kindEnum == null)
             {
                 return BadRequest("kind sadece cam veya screen olabilir.");
             }
@@ -59,11 +75,17 @@ namespace DenemeTest.Blazor.Controllers
                 return BadRequest("Kayıt verisi bulunamadı.");
             }
 
+            var session = await _sessionRepository.FindAsync(sessionId);
+
+            if (session == null)
+            {
+                return BadRequest("Bu sessionId için sınav oturumu bulunamadı.");
+            }
+
             Directory.CreateDirectory(_root);
 
-            var safeMime = string.IsNullOrWhiteSpace(mime)
-                ? "video/webm"
-                : mime.Trim();
+            var normalizedKind = ToStorageKind(kindEnum.Value);
+            var safeMime = NormalizeMimeType(mime);
 
             var fileName = $"{sessionId:N}-{normalizedKind}.webm";
             var tempFileName = $"{sessionId:N}-{normalizedKind}-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}.tmp";
@@ -105,6 +127,55 @@ namespace DenemeTest.Blazor.Controllers
 
                 var finalInfo = new FileInfo(finalPath);
 
+                if (!finalInfo.Exists || finalInfo.Length <= 0)
+                {
+                    return StatusCode(500, new
+                    {
+                        ok = false,
+                        sessionId,
+                        kind = normalizedKind,
+                        error = "Final kayıt dosyası oluşturulamadı."
+                    });
+                }
+
+                var uploadedAt = DateTime.UtcNow;
+                var expiresAt = uploadedAt.AddDays(30);
+
+                var existingRecording = await _recordingRepository.FirstOrDefaultAsync(x =>
+                    x.ExamSessionId == sessionId &&
+                    x.Kind == kindEnum.Value
+                );
+
+                if (existingRecording == null)
+                {
+                    var recording = new ExamRecording(
+                        Guid.NewGuid(),
+                        sessionId,
+                        kindEnum.Value,
+                        fileName,
+                        finalPath,
+                        safeMime,
+                        finalInfo.Length,
+                        uploadedAt,
+                        expiresAt
+                    );
+
+                    await _recordingRepository.InsertAsync(recording, autoSave: true);
+                }
+                else
+                {
+                    existingRecording.UpdateFileInfo(
+                        fileName,
+                        finalPath,
+                        safeMime,
+                        finalInfo.Length,
+                        uploadedAt,
+                        expiresAt
+                    );
+
+                    await _recordingRepository.UpdateAsync(existingRecording, autoSave: true);
+                }
+
                 return Ok(new
                 {
                     ok = true,
@@ -114,7 +185,9 @@ namespace DenemeTest.Blazor.Controllers
                     size = finalInfo.Length,
                     mime = safeMime,
                     root = _root,
-                    savedPath = finalPath
+                    savedPath = finalPath,
+                    uploadedAt,
+                    expiresAt
                 });
             }
             catch (Exception ex)
@@ -134,8 +207,9 @@ namespace DenemeTest.Blazor.Controllers
         }
 
         // GET /api/recordings/download?sessionId={guid}&kind=cam|screen
+        [Authorize]
         [HttpGet("download")]
-        public IActionResult Download(
+        public async Task<IActionResult> Download(
             [FromQuery] Guid sessionId,
             [FromQuery] string? kind = "cam")
         {
@@ -144,15 +218,37 @@ namespace DenemeTest.Blazor.Controllers
                 return BadRequest("sessionId boş olamaz.");
             }
 
-            var normalizedKind = NormalizeKind(kind);
+            var kindEnum = NormalizeKindEnum(kind);
 
-            if (normalizedKind == null)
+            if (kindEnum == null)
             {
                 return BadRequest("kind sadece cam veya screen olabilir.");
             }
 
-            var fileName = $"{sessionId:N}-{normalizedKind}.webm";
-            var path = Path.Combine(_root, fileName);
+            var normalizedKind = ToStorageKind(kindEnum.Value);
+
+            var recording = await _recordingRepository.FirstOrDefaultAsync(x =>
+                x.ExamSessionId == sessionId &&
+                x.Kind == kindEnum.Value &&
+                !x.IsStorageDeleted
+            );
+
+            string fileName;
+            string path;
+            string contentType;
+
+            if (recording != null)
+            {
+                fileName = recording.FileName;
+                path = recording.StoragePath;
+                contentType = NormalizeMimeType(recording.MimeType);
+            }
+            else
+            {
+                fileName = $"{sessionId:N}-{normalizedKind}.webm";
+                path = Path.Combine(_root, fileName);
+                contentType = "video/webm";
+            }
 
             if (!System.IO.File.Exists(path))
             {
@@ -165,7 +261,23 @@ namespace DenemeTest.Blazor.Controllers
                     expectedFileName = fileName,
                     expectedPath = path,
                     root = _root,
+                    metadataFound = recording != null,
                     existingFiles = GetExistingFileNames()
+                });
+            }
+
+            var fileInfo = new FileInfo(path);
+
+            if (fileInfo.Length <= 0)
+            {
+                return NotFound(new
+                {
+                    ok = false,
+                    message = "Kayıt dosyası var ancak boş görünüyor.",
+                    sessionId,
+                    kind = normalizedKind,
+                    fileName,
+                    path
                 });
             }
 
@@ -180,29 +292,21 @@ namespace DenemeTest.Blazor.Controllers
             Response.Headers.Pragma = "no-cache";
             Response.Headers.Expires = "0";
 
-            return File(stream, "video/webm", fileName);
+            return File(stream, contentType, fileName, enableRangeProcessing: true);
         }
 
         // GET /api/recordings/exists?sessionId={guid}
+        [AllowAnonymous]
         [HttpGet("exists")]
-        public IActionResult Exists([FromQuery] Guid sessionId)
+        public async Task<IActionResult> Exists([FromQuery] Guid sessionId)
         {
             if (sessionId == Guid.Empty)
             {
                 return BadRequest("sessionId boş olamaz.");
             }
 
-            var camFileName = $"{sessionId:N}-cam.webm";
-            var screenFileName = $"{sessionId:N}-screen.webm";
-
-            var camPath = Path.Combine(_root, camFileName);
-            var screenPath = Path.Combine(_root, screenFileName);
-
-            var camInfo = new FileInfo(camPath);
-            var screenInfo = new FileInfo(screenPath);
-
-            var camExists = camInfo.Exists && camInfo.Length > 0;
-            var screenExists = screenInfo.Exists && screenInfo.Length > 0;
+            var cam = await GetRecordingStatusAsync(sessionId, ExamRecordingKind.Cam);
+            var screen = await GetRecordingStatusAsync(sessionId, ExamRecordingKind.Screen);
 
             return Ok(new
             {
@@ -210,20 +314,32 @@ namespace DenemeTest.Blazor.Controllers
                 sessionId,
                 root = _root,
 
-                camExists,
-                camFileName = camExists ? camFileName : null,
-                camSize = camExists ? camInfo.Length : 0,
+                camExists = cam.Exists,
+                camFileName = cam.Exists ? cam.FileName : null,
+                camSize = cam.Exists ? cam.SizeBytes : 0,
+                camMetadataFound = cam.MetadataFound,
+                camUploadedAt = cam.UploadedAt,
+                camExpiresAt = cam.ExpiresAt,
 
-                screenExists,
-                screenFileName = screenExists ? screenFileName : null,
-                screenSize = screenExists ? screenInfo.Length : 0
+                screenExists = screen.Exists,
+                screenFileName = screen.Exists ? screen.FileName : null,
+                screenSize = screen.Exists ? screen.SizeBytes : 0,
+                screenMetadataFound = screen.MetadataFound,
+                screenUploadedAt = screen.UploadedAt,
+                screenExpiresAt = screen.ExpiresAt
             });
         }
 
         // GET /api/recordings/debug
+        [Authorize]
         [HttpGet("debug")]
-        public IActionResult Debug()
+        public async Task<IActionResult> Debug()
         {
+            if (!_env.IsDevelopment())
+            {
+                return NotFound();
+            }
+
             Directory.CreateDirectory(_root);
 
             var files = new DirectoryInfo(_root)
@@ -238,30 +354,51 @@ namespace DenemeTest.Blazor.Controllers
                 })
                 .ToList();
 
+            var latestMetadata = (await _recordingRepository.GetListAsync())
+                .OrderByDescending(x => x.UploadedAt)
+                .Take(50)
+                .Select(x => new
+                {
+                    x.Id,
+                    x.ExamSessionId,
+                    Kind = x.Kind.ToString(),
+                    x.FileName,
+                    x.StoragePath,
+                    x.MimeType,
+                    x.SizeBytes,
+                    x.UploadedAt,
+                    x.ExpiresAt,
+                    x.IsStorageDeleted,
+                    x.StorageDeletedAt,
+                    FileExists = System.IO.File.Exists(x.StoragePath)
+                })
+                .ToList();
+
             return Ok(new
             {
                 ok = true,
                 root = _root,
                 exists = Directory.Exists(_root),
                 fileCount = files.Count,
-                files
+                files,
+                metadataCount = latestMetadata.Count,
+                metadata = latestMetadata
             });
         }
 
         // DELETE /api/recordings/delete?sessionId={guid}
+        [Authorize]
         [HttpDelete("delete")]
-        public IActionResult Delete([FromQuery] Guid sessionId)
+        [UnitOfWork]
+        public async Task<IActionResult> Delete([FromQuery] Guid sessionId)
         {
             if (sessionId == Guid.Empty)
             {
                 return BadRequest("sessionId boş olamaz.");
             }
 
-            var camPath = Path.Combine(_root, $"{sessionId:N}-cam.webm");
-            var screenPath = Path.Combine(_root, $"{sessionId:N}-screen.webm");
-
-            var camDeleted = SafeDelete(camPath);
-            var screenDeleted = SafeDelete(screenPath);
+            var camDeleted = await DeleteRecordingKindAsync(sessionId, ExamRecordingKind.Cam);
+            var screenDeleted = await DeleteRecordingKindAsync(sessionId, ExamRecordingKind.Screen);
 
             return Ok(new
             {
@@ -270,6 +407,74 @@ namespace DenemeTest.Blazor.Controllers
                 camDeleted,
                 screenDeleted
             });
+        }
+
+        private async Task<RecordingStatus> GetRecordingStatusAsync(Guid sessionId, ExamRecordingKind kind)
+        {
+            var normalizedKind = ToStorageKind(kind);
+
+            var recording = await _recordingRepository.FirstOrDefaultAsync(x =>
+                x.ExamSessionId == sessionId &&
+                x.Kind == kind &&
+                !x.IsStorageDeleted
+            );
+
+            if (recording != null)
+            {
+                var info = new FileInfo(recording.StoragePath);
+
+                return new RecordingStatus
+                {
+                    Exists = info.Exists && info.Length > 0,
+                    MetadataFound = true,
+                    FileName = recording.FileName,
+                    SizeBytes = info.Exists ? info.Length : recording.SizeBytes,
+                    UploadedAt = recording.UploadedAt,
+                    ExpiresAt = recording.ExpiresAt
+                };
+            }
+
+            var legacyFileName = $"{sessionId:N}-{normalizedKind}.webm";
+            var legacyPath = Path.Combine(_root, legacyFileName);
+            var legacyInfo = new FileInfo(legacyPath);
+
+            return new RecordingStatus
+            {
+                Exists = legacyInfo.Exists && legacyInfo.Length > 0,
+                MetadataFound = false,
+                FileName = legacyFileName,
+                SizeBytes = legacyInfo.Exists ? legacyInfo.Length : 0,
+                UploadedAt = null,
+                ExpiresAt = null
+            };
+        }
+
+        private async Task<bool> DeleteRecordingKindAsync(Guid sessionId, ExamRecordingKind kind)
+        {
+            var deleted = false;
+            var normalizedKind = ToStorageKind(kind);
+
+            var recording = await _recordingRepository.FirstOrDefaultAsync(x =>
+                x.ExamSessionId == sessionId &&
+                x.Kind == kind &&
+                !x.IsStorageDeleted
+            );
+
+            if (recording != null)
+            {
+                deleted = SafeDelete(recording.StoragePath);
+
+                if (deleted)
+                {
+                    recording.MarkStorageDeleted(DateTime.UtcNow);
+                    await _recordingRepository.UpdateAsync(recording, autoSave: true);
+                }
+
+                return deleted;
+            }
+
+            var legacyPath = Path.Combine(_root, $"{sessionId:N}-{normalizedKind}.webm");
+            return SafeDelete(legacyPath);
         }
 
         private string[] GetExistingFileNames()
@@ -308,6 +513,28 @@ namespace DenemeTest.Blazor.Controllers
             return false;
         }
 
+        private static ExamRecordingKind? NormalizeKindEnum(string? kind)
+        {
+            var normalized = NormalizeKind(kind);
+
+            return normalized switch
+            {
+                "cam" => ExamRecordingKind.Cam,
+                "screen" => ExamRecordingKind.Screen,
+                _ => null
+            };
+        }
+
+        private static string ToStorageKind(ExamRecordingKind kind)
+        {
+            return kind switch
+            {
+                ExamRecordingKind.Cam => "cam",
+                ExamRecordingKind.Screen => "screen",
+                _ => "unknown"
+            };
+        }
+
         private static string? NormalizeKind(string? kind)
         {
             var normalized = string.IsNullOrWhiteSpace(kind)
@@ -329,6 +556,48 @@ namespace DenemeTest.Blazor.Controllers
 
                 _ => null
             };
+        }
+
+        private static string NormalizeMimeType(string? mime)
+        {
+            if (string.IsNullOrWhiteSpace(mime))
+            {
+                return "video/webm";
+            }
+
+            var normalized = mime.Trim().ToLowerInvariant();
+
+            if (normalized.StartsWith("video/webm"))
+            {
+                return "video/webm";
+            }
+
+            if (normalized.StartsWith("video/mp4"))
+            {
+                return "video/mp4";
+            }
+
+            if (normalized.StartsWith("audio/webm"))
+            {
+                return "audio/webm";
+            }
+
+            return "application/octet-stream";
+        }
+
+        private sealed class RecordingStatus
+        {
+            public bool Exists { get; set; }
+
+            public bool MetadataFound { get; set; }
+
+            public string? FileName { get; set; }
+
+            public long SizeBytes { get; set; }
+
+            public DateTime? UploadedAt { get; set; }
+
+            public DateTime? ExpiresAt { get; set; }
         }
     }
 }
