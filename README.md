@@ -1,7 +1,4 @@
 # DenemeTest - Online Mülakat ve Sınav Sistemi
-
-DenemeTest, C# .NET, ABP Framework, Blazor Server, PostgreSQL ve Docker teknolojileriyle geliştirilmiş online mülakat ve sınav yönetim sistemidir.
-
 Proje; adaylara tek kullanımlık sınav davet linki gönderilmesi, adayın kamera/mikrofon ve tüm ekran paylaşımı izni vererek sınava başlaması, sınav sırasında kamera ve ekran kaydının alınması, proctoring ihlallerinin takip edilmesi ve admin panelde detaylı sınav raporlarının görüntülenmesi üzerine kuruludur.
 
 ## Kullanılan Teknolojiler
@@ -238,7 +235,6 @@ Bu proje demo ve ürün prototipi seviyesinde çalışır durumdadır. Productio
 
 ## Proje Durumu
 
-Proje şu anda demo, teknik sunum ve iş görüşmesi için gösterilebilir seviyededir.
 
 Tamamlanan ana özellikler:
 
